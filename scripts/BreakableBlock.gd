@@ -34,7 +34,7 @@ func _physics_process(delta: float) -> void:
 	queue_redraw()
 
 func _calc_health() -> float:
-	var base: float = {"glass": 16.0, "wood": 32.0, "stone": 70.0}.get(material_type, 80.0)
+	var base: float = {"glass": 20.0, "wood": 40.0, "stone": 80.0}.get(material_type, 80.0)
 	var min_side: float = max(10.0, min(size.x, size.y))
 	var area: float = max(400.0, size.x * size.y)
 	var hp: float = round(base * pow(min_side / 20.0, 0.9) * pow(area / 1600.0, 0.35))
