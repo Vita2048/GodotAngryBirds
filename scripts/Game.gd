@@ -32,7 +32,6 @@ var fx: ParticleLayer
 var camera: Camera2D
 var ui_layer: CanvasLayer
 var ui: Control
-var restart_rect := Rect2(VIEW.x - 218, 20, 190, 48)
 var launch_power := 15.08
 
 func _ready() -> void:
@@ -271,14 +270,27 @@ func _input(event: InputEvent) -> void:
 		drag_bird.linear_velocity = Vector2.ZERO
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_SPACE:
 		_use_ability()
+	elif event is InputEventScreenTouch:
+		var m := get_global_mouse_position()
+		var screen_m := (event as InputEventScreenTouch).position
+		if event.pressed:
+			_handle_press(m, screen_m)
+		else:
+			_handle_release()
+	elif event is InputEventScreenDrag and is_dragging and drag_bird:
+		var d := get_global_mouse_position() - SLING
+		if d.length() > MAX_DRAG:
+			d = d.normalized() * MAX_DRAG
+		drag_bird.position = SLING + d
+		drag_bird.linear_velocity = Vector2.ZERO
 
 func _handle_press(world_m: Vector2, screen_m: Vector2) -> void:
 	if game_state == "START":
-		if Rect2(540, 330, 200, 72).has_point(screen_m):
+		if _get_ui_rect("play").has_point(screen_m):
 			load_level(0)
 		return
 	if game_state in ["WIN", "LOSE"]:
-		if Rect2(515, 410, 250, 76).has_point(screen_m):
+		if _get_ui_rect("result").has_point(screen_m):
 			if game_state == "WIN" and current_level < levels.size() - 1:
 				load_level(current_level + 1)
 			elif game_state == "WIN":
@@ -287,7 +299,7 @@ func _handle_press(world_m: Vector2, screen_m: Vector2) -> void:
 				load_level(current_level)
 		return
 	if game_state.begins_with("WAITING") or game_state == "PLAYING":
-		if restart_rect.has_point(screen_m):
+		if _get_ui_rect("reset").has_point(screen_m):
 			load_level(current_level)
 			return
 		if drag_bird and world_m.distance_to(drag_bird.position) < drag_bird.radius * 2.6:
@@ -537,7 +549,7 @@ func _draw_ui() -> void:
 		_draw_center_title(font)
 	elif game_state in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
 		ui.draw_string(font, Vector2(30, 45), "LEVEL %d   SCORE %d" % [current_level + 1, score], HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color.WHITE)
-		_draw_button(restart_rect, "RESET")
+		_draw_button(_get_ui_rect("reset"), "RESET")
 		var x := 40.0
 		for b in birds:
 			if b.state == "queue":
@@ -552,20 +564,24 @@ func _draw_ui() -> void:
 
 func _draw_center_title(font: Font) -> void:
 	var vp := get_viewport_rect().size
-	var center_x := vp.x * 0.5
 	ui.draw_string(font, Vector2(0, 250), "ANGRY BIRDS", HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 74, Color.WHITE)
-	var btn_width := 200.0
-	var btn_height := 72.0
-	var btn_rect := Rect2(center_x - btn_width * 0.5, 330, btn_width, btn_height)
-	_draw_button(btn_rect, "PLAY")
+	_draw_button(_get_ui_rect("play"), "PLAY")
 	
 
 func _draw_result(font: Font, title: String, button: String) -> void:
 	var vp := get_viewport_rect().size
-	var center_x := vp.x * 0.5
 	ui.draw_string(font, Vector2(0, 330), title, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 52, Color.WHITE)
 	ui.draw_string(font, Vector2(0, 374), "SCORE %d" % score, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 26, Color(1, 0.92, 0.55))
-	_draw_button(Rect2(center_x - 125, 410, 250, 76), button)
+	_draw_button(_get_ui_rect("result"), button)
+
+func _get_ui_rect(id: String) -> Rect2:
+	var vp := get_viewport_rect().size
+	var cx := vp.x * 0.5
+	match id:
+		"play": return Rect2(cx - 100, 330, 200, 72)
+		"result": return Rect2(cx - 125, 410, 250, 76)
+		"reset": return Rect2(vp.x - 220, 20, 190, 48)
+	return Rect2()
 
 func _draw_button(rect: Rect2, text: String) -> void:
 	ui.draw_rect(rect.grow(4), Color(0, 0, 0, 0.25), true)
