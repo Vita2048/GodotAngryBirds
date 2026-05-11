@@ -13,7 +13,7 @@ var life_time := 0.0
 func setup(p_type: String, p_radius: float) -> void:
 	bird_type = p_type
 	radius = p_radius
-	mass = {"bird_s": 0.8, "bird_m": 1.15, "bird_l": 1.9}.get(bird_type, 1.0)
+	mass = {"bird_s": 1.1, "bird_m": 1.6, "bird_l": 2.3}.get(bird_type, 1.0)
 	gravity_scale = 1.0
 	linear_damp = 0.05
 	angular_damp = 0.08

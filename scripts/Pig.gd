@@ -4,7 +4,7 @@ signal damaged(at_position: Vector2, force: float)
 signal popped(pig: Node, at_position: Vector2)
 
 var radius := 25.0
-var health := 100.0
+var health := 35.0
 
 func setup(p_radius: float) -> void:
 	radius = p_radius

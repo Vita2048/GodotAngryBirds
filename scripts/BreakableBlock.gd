@@ -5,8 +5,8 @@ signal destroyed(block: Node, material_type: String, at_position: Vector2)
 
 var material_type := "wood"
 var size := Vector2(80, 20)
-var health := 100.0
-var max_health := 100.0
+var health := 50.0
+var max_health := 50.0
 var chip_cooldown := 0.0
 
 func setup(p_material: String, p_size: Vector2, angle_radians := 0.0) -> void:
@@ -18,7 +18,7 @@ func setup(p_material: String, p_size: Vector2, angle_radians := 0.0) -> void:
 	contact_monitor = true
 	max_contacts_reported = 8
 	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
-	mass = max(0.25, size.x * size.y / 1450.0) * {"glass": 0.62, "wood": 1.0, "stone": 2.2}.get(material_type, 1.0)
+	mass = max(0.25, size.x * size.y / 1450.0) * {"glass": 0.42, "wood": 0.5, "stone": 1.5}.get(material_type, 1.0)
 	physics_material_override = PhysicsMaterial.new()
 	physics_material_override.friction = {"glass": 0.45, "wood": 0.82, "stone": 0.92}.get(material_type, 0.7)
 	physics_material_override.bounce = {"glass": 0.28, "wood": 0.16, "stone": 0.08}.get(material_type, 0.1)
@@ -34,7 +34,7 @@ func _physics_process(delta: float) -> void:
 	queue_redraw()
 
 func _calc_health() -> float:
-	var base: float = {"glass": 50.0, "wood": 100.0, "stone": 300.0}.get(material_type, 100.0)
+	var base: float = {"glass": 16.0, "wood": 32.0, "stone": 70.0}.get(material_type, 80.0)
 	var min_side: float = max(10.0, min(size.x, size.y))
 	var area: float = max(400.0, size.x * size.y)
 	var hp: float = round(base * pow(min_side / 20.0, 0.9) * pow(area / 1600.0, 0.35))
