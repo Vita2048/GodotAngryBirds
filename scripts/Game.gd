@@ -474,15 +474,21 @@ func _draw_ui() -> void:
 		_draw_result(font, "TRY AGAIN", "RESTART")
 
 func _draw_center_title(font: Font) -> void:
-	ui.draw_string(font, Vector2(370, 250), "ANGRY BIRDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 74, Color.WHITE)
-	ui.draw_string(font, Vector2(442, 296), "PREMIUM GODOT EDITION", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(1, 0.92, 0.55, 0.95))
-	_draw_button(Rect2(540, 330, 200, 72), "PLAY")
+	var vp := get_viewport_rect().size
+	var center_x := vp.x * 0.5
+	ui.draw_string(font, Vector2(0, 250), "ANGRY BIRDS", HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 74, Color.WHITE)
+	var btn_width := 200.0
+	var btn_height := 72.0
+	var btn_rect := Rect2(center_x - btn_width * 0.5, 330, btn_width, btn_height)
+	_draw_button(btn_rect, "PLAY")
+	
 
 func _draw_result(font: Font, title: String, button: String) -> void:
-	ui.draw_rect(Rect2(Vector2.ZERO, VIEW), Color(0, 0, 0, 0.34), true)
-	ui.draw_string(font, Vector2(445, 330), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 52, Color.WHITE)
-	ui.draw_string(font, Vector2(510, 374), "SCORE %d" % score, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color(1, 0.92, 0.55))
-	_draw_button(Rect2(515, 410, 250, 76), button)
+	var vp := get_viewport_rect().size
+	var center_x := vp.x * 0.5
+	ui.draw_string(font, Vector2(0, 330), title, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 52, Color.WHITE)
+	ui.draw_string(font, Vector2(0, 374), "SCORE %d" % score, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 26, Color(1, 0.92, 0.55))
+	_draw_button(Rect2(center_x - 125, 410, 250, 76), button)
 
 func _draw_button(rect: Rect2, text: String) -> void:
 	ui.draw_rect(rect.grow(4), Color(0, 0, 0, 0.25), true)
