@@ -44,18 +44,16 @@ func _ready() -> void:
 
 func _load_assets() -> void:
 	for i in range(1, 6):
-		cloud_textures.append(_load_svg_texture("res://assets/cloud_%d.svg" % i, 1.0))
-	grass_texture = _load_svg_texture("res://assets/GrassHorizon.svg", 0.45)
+		cloud_textures.append(_load_texture("res://assets/cloud_%d.svg" % i))
+	grass_texture = _load_texture("res://assets/GrassHorizon.svg")
 
-func _load_svg_texture(path: String, scale: float) -> Texture2D:
-	var bytes := FileAccess.get_file_as_bytes(path)
-	var image := Image.new()
-	var err := image.load_svg_from_buffer(bytes, scale)
-	if err != OK:
-		var fallback := Image.create(64, 64, false, Image.FORMAT_RGBA8)
-		fallback.fill(Color(1, 1, 1, 0.25))
-		return ImageTexture.create_from_image(fallback)
-	return ImageTexture.create_from_image(image)
+func _load_texture(path: String) -> Texture2D:
+	var texture := load(path) as Texture2D
+	if texture:
+		return texture
+	var fallback := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	fallback.fill(Color(1, 1, 1, 0.25))
+	return ImageTexture.create_from_image(fallback)
 
 func _build_scene() -> void:
 	world_root = Node2D.new()
