@@ -10,6 +10,7 @@ const SLING := Vector2(250, 570)
 const MAX_DRAG := 100.0
 const GROUND_SCROLL_WIDTH := 520.0
 const SKY_DECORATION_BOTTOM := VIEW.y * 0.30
+const SKY_COLOR := Color("#76c7ff")
 
 var cloud_textures: Array[Texture2D] = []
 var grass_texture: Texture2D
@@ -345,13 +346,24 @@ func _on_bird_impact(pos: Vector2, force: float, type: String) -> void:
 func _draw() -> void:
 	_draw_sky()
 	_draw_ground()
+	_mask_sky_tint()
 	_draw_clouds()
+	_draw_sun()
 	_draw_sling()
 
 func _draw_sky() -> void:
+	var visible_size := _visible_world_size()
+	var visible_top_left := camera.position - visible_size * 0.5
+	draw_rect(Rect2(visible_top_left - visible_size, visible_size * 3.0), SKY_COLOR, true)
+
+func _mask_sky_tint() -> void:
 	var visible_width := _visible_world_width()
 	var cam_x := camera.position.x - visible_width * 0.5
-	draw_rect(Rect2(cam_x, 0, visible_width + 40, VIEW.y), Color("#76c7ff"), true)
+	draw_rect(Rect2(cam_x - visible_width, 0, visible_width * 3.0, SKY_DECORATION_BOTTOM), SKY_COLOR, true)
+
+func _draw_sun() -> void:
+	var visible_width := _visible_world_width()
+	var cam_x := camera.position.x - visible_width * 0.5
 	var sun_pos := Vector2(cam_x + visible_width * 0.78, VIEW.y * 0.10)
 	var t := Time.get_ticks_msec() * 0.001
 	var pulse := sin(t * 2.2)
@@ -403,10 +415,17 @@ func _max_camera_x() -> float:
 	return max(VIEW.x * 0.5, _world_right_wall_x() - visible_width * 0.5)
 
 func _visible_world_width() -> float:
-	var window_size := DisplayServer.window_get_size()
-	if window_size.y <= 0:
-		return VIEW.x
-	return max(VIEW.x, VIEW.y * float(window_size.x) / float(window_size.y))
+	return _visible_world_size().x
+
+func _visible_world_size() -> Vector2:
+	var viewport_size := get_viewport_rect().size
+	if viewport_size.y <= 0:
+		return VIEW
+	var viewport_aspect := viewport_size.x / viewport_size.y
+	var view_aspect := VIEW.x / VIEW.y
+	if viewport_aspect > view_aspect:
+		return Vector2(VIEW.y * viewport_aspect, VIEW.y)
+	return Vector2(VIEW.x, VIEW.x / viewport_aspect)
 
 func _draw_sling() -> void:
 	var rear_tip := SLING + Vector2(-20, -10)
