@@ -474,7 +474,6 @@ func _draw_ui() -> void:
 		_draw_result(font, "TRY AGAIN", "RESTART")
 
 func _draw_center_title(font: Font) -> void:
-	ui.draw_rect(Rect2(Vector2.ZERO, VIEW), Color(0, 0, 0, 0.08), true)
 	ui.draw_string(font, Vector2(370, 250), "ANGRY BIRDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 74, Color.WHITE)
 	ui.draw_string(font, Vector2(442, 296), "PREMIUM GODOT EDITION", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(1, 0.92, 0.55, 0.95))
 	_draw_button(Rect2(540, 330, 200, 72), "PLAY")
