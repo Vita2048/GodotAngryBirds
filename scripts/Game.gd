@@ -551,7 +551,7 @@ func _draw_ui() -> void:
 	if game_state == "START":
 		_draw_center_title(font)
 	elif game_state in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
-		ui.draw_string(font, Vector2(30, 45), "LEVEL %d   SCORE %d" % [current_level + 1, score], HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color.WHITE)
+		_draw_text_fx(font, Vector2(30, 45), "LEVEL %d   SCORE %d" % [current_level + 1, score], HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1, 0.196, 0.196), 4.0, 4.0)
 		_draw_button(_get_ui_rect("reset"), "RESET")
 		var x := 40.0
 		for b in birds:
@@ -567,44 +567,66 @@ func _draw_ui() -> void:
 func _draw_center_title(font: Font) -> void:
 	var vp := get_viewport_rect().size
 	var title_text = "ANGRY BIRDS"
-	var title_pos = Vector2(0, 220)
 	var font_size = 100
+	var target_y = 220.0
 	
-	# Shadow with blur effect (shadowBlur: 20, shadowColor: rgba(0,0,0,0.8))
-	for offset_dist in [6.0, 4.0, 2.0]:
-		var offset := Vector2(offset_dist, offset_dist)
-		var alpha: float = 0.8 * (1.0 - offset_dist / 6.0)
-		ui.draw_string(font, title_pos + offset, title_text, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), font_size, Color(0, 0, 0, alpha))
+	# Precise vertical centering for Godot draw_string (which uses baseline)
+	var ascent = font.get_ascent(font_size)
+	var descent = font.get_descent(font_size)
+	var title_pos = Vector2(0, target_y + (ascent - descent) * 0.5)
 	
-	# White outline (stroke 255, strokeWeight 8)
-	ui.draw_string_outline(font, title_pos, title_text, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), font_size, 8, Color.WHITE)
-	
-	# Red fill (fill 255, 50, 50)
-	var red_color = Color(1.0, 0.2, 0.2)
-	ui.draw_string(font, title_pos, title_text, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), font_size, red_color)
-	
+	_draw_text_fx(font, title_pos, title_text, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), font_size, Color(1, 0.196, 0.196), 10.0, 12.0)
 	_draw_button(_get_ui_rect("play"), "PLAY")
+
+func _draw_text_fx(font: Font, pos: Vector2, text: String, align: int, width: int, size: int, color: Color, stroke_size: float = 4.0, shadow_blur: float = 8.0) -> void:
+	# 1. Subtle Blurry Shadow (Deep back)
+	for i in range(4, 0, -1):
+		var alpha = 0.35 * (1.0 - float(i) / 4.0)
+		ui.draw_string(font, pos + Vector2(i, i) * 1.5, text, align, width, size, Color(0, 0, 0, alpha))
+
+	# 2. White Outline (Outermost)
+	ui.draw_string_outline(font, pos, text, align, width, size, int(stroke_size + 2), Color.WHITE)
+	
+	# 3. Inner Subtle Shadow/Outline (Same width on all sides)
+	ui.draw_string_outline(font, pos, text, align, width, size, int(stroke_size * 0.4), Color(0, 0, 0, 0.8))
+	
+	# 4. Main Red Fill
+	ui.draw_string(font, pos, text, align, width, size, color)
 
 func _draw_result(font: Font, title: String, button: String) -> void:
 	var vp := get_viewport_rect().size
-	ui.draw_string(font, Vector2(0, 330), title, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 52, Color.WHITE)
-	ui.draw_string(font, Vector2(0, 374), "SCORE %d" % score, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 26, Color(1, 0.92, 0.55))
+	_draw_text_fx(font, Vector2(0, 330), title, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 52, Color(1, 0.196, 0.196), 6.0, 8.0)
+	_draw_text_fx(font, Vector2(0, 374), "SCORE %d" % score, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 26, Color(1, 0.196, 0.196), 4.0, 4.0)
 	_draw_button(_get_ui_rect("result"), button)
 
 func _get_ui_rect(id: String) -> Rect2:
 	var vp := get_viewport_rect().size
 	var cx := vp.x * 0.5
 	match id:
-		"play": return Rect2(cx - 100, 330, 200, 72)
+		"play": return Rect2(cx - 100, 310, 200, 80)
 		"result": return Rect2(cx - 125, 410, 250, 76)
 		"reset": return Rect2(vp.x - 220, 20, 190, 48)
 	return Rect2()
 
 func _draw_button(rect: Rect2, text: String) -> void:
-	ui.draw_rect(rect.grow(4), Color(0, 0, 0, 0.25), true)
-	ui.draw_rect(rect, Color("#e84a31"), true)
-	ui.draw_rect(rect.grow(-5), Color(1, 1, 1, 0.13), false, 2)
-	ui.draw_string(ThemeDB.fallback_font, rect.position + Vector2(0, rect.size.y * 0.68), text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, 28, Color.WHITE)
+	var sb = StyleBoxFlat.new()
+	sb.bg_color = Color("#e84a31")
+	sb.set_corner_radius_all(18) # Modern Android rounded corners
+	sb.shadow_color = Color(0, 0, 0, 0.3)
+	sb.shadow_size = 6
+	sb.shadow_offset = Vector2(0, 4)
+	sb.border_width_bottom = 4
+	sb.border_color = Color("#b82e1c")
+	sb.anti_aliasing = true
+	ui.draw_style_box(sb, rect)
+	
+	var font = ThemeDB.fallback_font
+	var f_size = 28
+	var ascent = font.get_ascent(f_size)
+	var descent = font.get_descent(f_size)
+	var text_y = rect.position.y + (rect.size.y - 4) * 0.5 + (ascent - descent) * 0.5
+	
+	ui.draw_string(font, Vector2(rect.position.x, text_y), text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, f_size, Color.WHITE)
 
 func _draw_bird_icon(pos: Vector2, type: String) -> void:
 	var radius := 16.0 if type == "bird_s" else (18.0 if type == "bird_m" else 20.0)
