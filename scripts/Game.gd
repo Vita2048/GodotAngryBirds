@@ -12,9 +12,11 @@ const GROUND_SCROLL_WIDTH := 520.0
 const SKY_DECORATION_BOTTOM := VIEW.y * 0.30
 const SKY_COLOR := Color("#76c7ff")
 
-var cloud_textures: Array[Texture2D] = []
-var grass_texture: Texture2D
-var clouds: Array[Dictionary] = []
+var background_texture: Texture2D
+var butterfly_texture: Texture2D
+var sun_texture: Texture2D
+var butterflies: Array[Dictionary] = []
+const WORLD_WIDTH := 3500.0
 var levels: Array[Dictionary] = []
 var birds: Array = []
 var pigs: Array = []
@@ -39,13 +41,13 @@ func _ready() -> void:
 	_load_assets()
 	_build_levels()
 	_build_scene()
-	_make_clouds()
+	_make_butterflies()
 	set_process_input(true)
 
 func _load_assets() -> void:
-	for i in range(1, 6):
-		cloud_textures.append(_load_texture("res://assets/cloud_%d.svg" % i))
-	grass_texture = _load_texture("res://assets/GrassHorizon.svg")
+	background_texture = _load_texture("res://assets/ABBackgroundWide.png")
+	butterfly_texture = _load_texture("res://assets/Butterfly.png")
+	sun_texture = _load_texture("res://assets/SunSingle.png")
 
 func _load_texture(path: String) -> Texture2D:
 	var texture := load(path) as Texture2D
@@ -74,17 +76,39 @@ func _build_scene() -> void:
 	ui.draw.connect(_draw_ui)
 	ui_layer.add_child(ui)
 
-func _make_clouds() -> void:
-	for i in 12:
-		var texture: Texture2D = cloud_textures.pick_random()
-		var scale: float = randf_range(0.055, 0.09)
-		clouds.append({
-			"texture": texture,
-			"pos": Vector2(180 + i * 260 + randf_range(40, 150), randf_range(18, VIEW.y * 0.16)),
-			"scale": scale,
-			"phase": randf() * TAU,
-			"speed": randf_range(0.12, 0.38)
-		})
+func _make_butterflies() -> void:
+	for i in 3:
+		_spawn_butterfly(true)
+
+func _spawn_butterfly(random_x := false) -> void:
+	var cam_x := camera.position.x - VIEW.x * 0.5
+	var x := randf_range(cam_x - 200, cam_x + VIEW.x + 200) if random_x else (cam_x - 200 if randf() > 0.5 else cam_x + VIEW.x + 200)
+	butterflies.append({
+		"pos": Vector2(x, randf_range(288, 650)),
+		"vx": randf_range(30.0, 90.0) * (1.0 if x < cam_x + VIEW.x * 0.5 else -1.0),
+		"vy": randf_range(-30.0, 30.0),
+		"scale": 0.12,
+		"phase": randf() * TAU,
+		"frame": randi() % 15,
+		"frame_timer": 0.0
+	})
+
+func _update_butterflies(delta: float) -> void:
+	var cam_x := camera.position.x - VIEW.x * 0.5
+	var t := Time.get_ticks_msec() * 0.001
+	for i in range(butterflies.size() - 1, -1, -1):
+		var bf := butterflies[i]
+		bf.pos.x += bf.vx * delta
+		bf.pos.y += (bf.vy + sin(t * 3.0 + bf.phase) * 45.0) * delta
+		
+		bf.frame_timer += delta * 15.0 # ~15 FPS
+		if bf.frame_timer >= 0.066: # roughly 15fps
+			bf.frame = (bf.frame + 1) % 15
+			bf.frame_timer = 0.0
+			
+		if bf.pos.x < cam_x - 400 or bf.pos.x > cam_x + VIEW.x + 400 or bf.pos.y < 200 or bf.pos.y > 750:
+			butterflies.remove_at(i)
+			_spawn_butterfly()
 
 func _build_levels() -> void:
 	levels = [
@@ -174,6 +198,7 @@ func _build_levels() -> void:
 
 func _process(delta: float) -> void:
 	_update_camera(delta)
+	_update_butterflies(delta)
 	_check_bird_stop()
 	_cleanup_fallen()
 	_check_win_lose()
@@ -411,74 +436,75 @@ func _on_bird_impact(pos: Vector2, force: float, type: String) -> void:
 
 func _draw() -> void:
 	_draw_sky()
-	_draw_ground()
-	_mask_sky_tint()
-	_draw_clouds()
 	_draw_sun()
+	_draw_butterflies()
 	_draw_sling()
 
 func _draw_sky() -> void:
-	var visible_size := _visible_world_size()
-	var visible_top_left := camera.position - visible_size * 0.5
-	draw_rect(Rect2(visible_top_left - visible_size, visible_size * 3.0), SKY_COLOR, true)
-
-func _mask_sky_tint() -> void:
-	var visible_width := _visible_world_width()
-	var cam_x := camera.position.x - visible_width * 0.5
-	draw_rect(Rect2(cam_x - visible_width, 0, visible_width * 3.0, SKY_DECORATION_BOTTOM), SKY_COLOR, true)
+	if not background_texture:
+		return
+	var cam_x := camera.position.x - VIEW.x * 0.5
+	var tex_w := background_texture.get_size().x
+	var tex_h := background_texture.get_size().y
+	var scale := 720.0 / tex_h
+	var draw_w := tex_w * scale
+	
+	var start_x : float = floor(cam_x / draw_w) * draw_w - draw_w
+	var end_x : float = cam_x + VIEW.x + draw_w
+	
+	var x : float = start_x
+	while x < end_x:
+		draw_texture_rect(background_texture, Rect2(x, 0, draw_w, 720), false)
+		x += draw_w
 
 func _draw_sun() -> void:
-	var visible_width := _visible_world_width()
-	var cam_x := camera.position.x - visible_width * 0.5
-	var sun_pos := Vector2(cam_x + visible_width * 0.78, VIEW.y * 0.10)
+	if not sun_texture:
+		return
+	var cam_x := camera.position.x - VIEW.x * 0.5
+	var sun_pos := Vector2(cam_x + 1150, 110)
 	var t := Time.get_ticks_msec() * 0.001
-	var pulse := sin(t * 2.2)
-	draw_circle(sun_pos, 112.0 + pulse * 8.0, Color(1.0, 0.82, 0.24, 0.08))
-	draw_circle(sun_pos, 78.0 + pulse * 5.0, Color(1.0, 0.88, 0.32, 0.18))
-	for i in 16:
-		var a := TAU * float(i) / 16.0 + t * 0.16
-		var r1 := 42.0 + sin(t * 3.0 + float(i)) * 3.0
-		var r2 := 92.0 + sin(t * 2.0 + float(i) * 0.7) * 7.0
-		draw_line(sun_pos + Vector2(cos(a), sin(a)) * r1, sun_pos + Vector2(cos(a), sin(a)) * r2, Color(1.0, 0.78, 0.18, 0.24), 5.0)
-	draw_circle(sun_pos, 36.0 + pulse * 2.0, Color("#ffd84a"))
-	draw_circle(sun_pos + Vector2(-11, -11), 14.0, Color(1, 1, 1, 0.14))
+	var pulse : float = sin(t * 1.5) # Reduced speed to match 0.025 * 60 approx
+	var scale_val : float = remap(pulse, -1.0, 1.0, 0.9, 1.1)
 	
-func _draw_clouds() -> void:
-	var visible_width := _visible_world_width()
-	var cam_x := camera.position.x - visible_width * 0.5
-	for cloud in clouds:
-		var tex: Texture2D = cloud.texture
-		var phase: float = cloud.phase + Time.get_ticks_msec() * 0.00008 * cloud.speed
-		var pos: Vector2 = cloud.pos + Vector2(cam_x * 0.12, 0) + Vector2(cos(phase) * 12.0, sin(phase * 0.8) * 6.0)
-		var s: float = cloud.scale * (1.0 + sin(phase) * 0.04)
-		var size := tex.get_size() * s
-		pos.y = clamp(pos.y, 8.0, SKY_DECORATION_BOTTOM - size.y - 8.0)
-		if pos.x < cam_x + 36.0 or pos.x + size.x > cam_x + visible_width - 36.0:
-			continue
-		draw_texture_rect(tex, Rect2(pos, size), false, Color(1, 1, 1, 0.92))
+	# Glow
+	var glow_size : float = remap(pulse, -1.0, 1.0, 110.0, 210.0)
+	# Godot doesn't have easy radial gradients in draw calls, 
+	# but we can draw a few circles with fading alpha to simulate it
+	for i in 8:
+		var r := glow_size * (1.0 - float(i) / 8.0) * 2.2
+		var a := 0.15 * (float(i) / 8.0)
+		draw_circle(sun_pos, r, Color(1.0, 0.8, 0.0, a))
 
-func _draw_ground() -> void:
-	if grass_texture:
-		var target := Rect2(Vector2(_ground_left_x(), VIEW.y - _ground_draw_size().y), _ground_draw_size())
-		draw_texture_rect(grass_texture, target, false)
+	var sun_rot := t * 0.5 # Slow rotation
+	draw_set_transform(sun_pos, sun_rot, Vector2.ONE * scale_val)
+	var tex_size := sun_texture.get_size()
+	draw_texture_rect(sun_texture, Rect2(-64, -64, 128, 128), false)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-func _ground_draw_size() -> Vector2:
-	if not grass_texture:
-		return Vector2.ZERO
-	var src_size := grass_texture.get_size()
-	var draw_width := _visible_world_width() + GROUND_SCROLL_WIDTH
-	var scale_to_width := draw_width / src_size.x
-	return src_size * scale_to_width
-
-func _ground_left_x() -> float:
-	return VIEW.x * 0.5 - _visible_world_width() * 0.5
+func _draw_butterflies() -> void:
+	if not butterfly_texture:
+		return
+	var tex_size := butterfly_texture.get_size()
+	var fw := tex_size.x / 4.0
+	var fh := tex_size.y / 4.0
+	
+	for bf in butterflies:
+		var row : float = floor(bf.frame / 4.0)
+		var col : int = int(bf.frame) % 4
+		var src_rect : Rect2 = Rect2(col * fw, row * fh, fw, fh)
+		var draw_size : Vector2 = Vector2(fw, fh) * bf.scale
+		
+		var flip : float = 1.0 if bf.vx > 0 else -1.0
+		draw_set_transform(bf.pos, 0.0, Vector2(flip, 1.0))
+		draw_texture_rect_region(butterfly_texture, Rect2(-draw_size * 0.5, draw_size), src_rect)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _world_right_wall_x() -> float:
-	return _ground_left_x() + _ground_draw_size().x
+	return WORLD_WIDTH
 
 func _max_camera_x() -> float:
 	var visible_width := _visible_world_width()
-	return max(VIEW.x * 0.5, _world_right_wall_x() - visible_width * 0.5)
+	return max(VIEW.x * 0.5, WORLD_WIDTH - visible_width * 0.5)
 
 func _visible_world_width() -> float:
 	return _visible_world_size().x
