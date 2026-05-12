@@ -268,8 +268,6 @@ func _input(event: InputEvent) -> void:
 			d = d.normalized() * MAX_DRAG
 		drag_bird.position = SLING + d
 		drag_bird.linear_velocity = Vector2.ZERO
-	elif event is InputEventKey and event.pressed and event.keycode == KEY_SPACE:
-		_use_ability()
 	elif event is InputEventScreenTouch:
 		var m := get_global_mouse_position()
 		var screen_m := (event as InputEventScreenTouch).position
@@ -304,8 +302,6 @@ func _handle_press(world_m: Vector2, screen_m: Vector2) -> void:
 			return
 		if drag_bird and world_m.distance_to(drag_bird.position) < drag_bird.radius * 2.6:
 			is_dragging = true
-		elif active_bird and active_bird.game_state == "flying" and not active_bird.ability_used:
-			_use_ability()
 
 func _handle_release() -> void:
 	if not is_dragging or not drag_bird:
@@ -323,25 +319,6 @@ func _handle_release() -> void:
 	else:
 		drag_bird.position = SLING
 
-func _use_ability() -> void:
-	if not active_bird or active_bird.ability_used:
-		return
-	active_bird.ability_used = true
-	if active_bird.bird_type == "bird_l":
-		active_bird.linear_velocity = active_bird.linear_velocity.normalized() * 1250.0
-		fx.burst(active_bird.global_position, [Color("#ffd447"), Color("#ff6e52"), Color.WHITE], 32, 1.2, "spark")
-	elif active_bird.bird_type == "bird_m":
-		for offset in [-16.0, 16.0]:
-			var clone := BirdScene.new()
-			clone.position = active_bird.position + Vector2(0, offset)
-			clone.setup("bird_m", 18.0)
-			clone.game_state = "flying"
-			clone.ability_used = true
-			clone.linear_velocity = active_bird.linear_velocity * 1.08 + Vector2(0, offset * 14.0)
-			clone.strong_impact.connect(_on_bird_impact)
-			world_root.add_child(clone)
-			birds.append({"type": "bird_m", "state": "flying", "node": clone})
-		fx.burst(active_bird.global_position, [Color("#ffe84a"), Color("#fff8b4"), Color("#ffb22a")], 28, 1.0, "spark")
 
 func _update_camera(_delta: float) -> void:
 	var target_x := VIEW.x * 0.5
@@ -555,10 +532,9 @@ func _draw_ui() -> void:
 			if b.state == "queue":
 				_draw_bird_icon(Vector2(x, 88), b.type)
 				x += 38
-		if active_bird and active_bird.game_state == "flying" and not active_bird.ability_used and active_bird.bird_type != "bird_s":
-			ui.draw_string(font, Vector2(470, 48), "CLICK OR SPACE FOR POWER", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(1, 1, 1, 0.86))
 	elif game_state == "WIN":
-		_draw_result(font, "LEVEL CLEARED", "NEXT LEVEL" if current_level < levels.size() - 1 else "MAIN MENU")
+		_draw_result(font, "LEVEL %d CLEARED" % (current_level + 1), "NEXT LEVEL" if current_level < levels.size() - 1 else "MAIN MENU"
+)
 	elif game_state == "LOSE":
 		_draw_result(font, "TRY AGAIN", "RESTART")
 
