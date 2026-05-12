@@ -566,9 +566,23 @@ func _draw_ui() -> void:
 
 func _draw_center_title(font: Font) -> void:
 	var vp := get_viewport_rect().size
-	ui.draw_string(font, Vector2(0, 250), "ANGRY BIRDS", HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 74, Color.WHITE)
-	_draw_button(_get_ui_rect("play"), "PLAY")
+	var title_text = "ANGRY BIRDS"
+	var title_pos = Vector2(0, 250)
+	var font_size = 100 # Match the 100 from the provided JS code
 	
+	# 1. Draw Shadow (Offset slightly)
+	# Note: Godot doesn't have a direct 'shadowBlur' for draw_string, 
+	# so we simulate it with a dark transparent layer or multiple offsets.
+	ui.draw_string(font, title_pos + Vector2(4, 4), title_text, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), font_size, Color(0, 0, 0, 0.5))
+	
+	# 2. Draw White Outline (strokeWeight 8)
+	ui.draw_string_outline(font, title_pos, title_text, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), font_size, 8, Color.WHITE)
+	
+	# 3. Draw Red Fill (fill 255, 50, 50)
+	var red_color = Color(1.0, 0.2, 0.2) # RGB(255, 50, 50)
+	ui.draw_string(font, title_pos, title_text, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), font_size, red_color)
+	
+	_draw_button(_get_ui_rect("play"), "PLAY")
 
 func _draw_result(font: Font, title: String, button: String) -> void:
 	var vp := get_viewport_rect().size
