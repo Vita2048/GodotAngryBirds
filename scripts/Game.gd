@@ -576,6 +576,17 @@ func _draw_center_title(font: Font) -> void:
 	var title_pos = Vector2(0, target_y + (ascent - descent) * 0.5)
 	
 	_draw_text_fx(font, title_pos, title_text, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), font_size, Color(1, 0.196, 0.196), 10.0, 12.0)
+	var version = ProjectSettings.get_setting("application/config/version", "dev")
+	var version_text = "Version: " + version
+	
+	var version_font_size = 18
+	var version_y_offset = 75.0                    # Distance below the title
+	
+	var version_pos = Vector2(0, target_y + version_y_offset)
+	
+	# Draw version using the same helper and color style as the title
+	_draw_text_fx(font, version_pos, version_text, HORIZONTAL_ALIGNMENT_CENTER, 
+				  int(vp.x), version_font_size, Color(1, 0.196, 0.196), 5.0, 6.0)
 	_draw_button(_get_ui_rect("play"), "PLAY")
 
 func _draw_text_fx(font: Font, pos: Vector2, text: String, align: int, width: int, size: int, color: Color, stroke_size: float = 4.0, shadow_blur: float = 8.0) -> void:
