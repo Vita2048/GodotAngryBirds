@@ -4,6 +4,7 @@ const BirdScene := preload("res://scripts/Bird.gd")
 const BlockScene := preload("res://scripts/BreakableBlock.gd")
 const PigScene := preload("res://scripts/Pig.gd")
 const ParticleLayer := preload("res://scripts/ParticleLayer.gd")
+const ChickenScene := preload("res://scripts/Chicken.gd")
 
 const VIEW := Vector2(1280, 720)
 const SLING := Vector2(250, 570)
@@ -15,7 +16,10 @@ const SKY_COLOR := Color("#76c7ff")
 var background_texture: Texture2D
 var butterfly_texture: Texture2D
 var sun_texture: Texture2D
+var chicken_flying_texture: Texture2D
+var chicken_shot_texture: Texture2D
 var butterflies: Array[Dictionary] = []
+var chickens: Array = []
 const WORLD_WIDTH := 3500.0
 var levels: Array[Dictionary] = []
 var birds: Array = []
@@ -48,6 +52,8 @@ func _load_assets() -> void:
 	background_texture = _load_texture("res://assets/ABBackgroundWide.png")
 	butterfly_texture = _load_texture("res://assets/Butterfly.png")
 	sun_texture = _load_texture("res://assets/SunSingle.png")
+	chicken_flying_texture = _load_texture("res://assets/ChickenFlyingL.png")
+	chicken_shot_texture = _load_texture("res://assets/ChickenShotL.png")
 
 func _load_texture(path: String) -> Texture2D:
 	var texture := load(path) as Texture2D
@@ -199,6 +205,7 @@ func _build_levels() -> void:
 func _process(delta: float) -> void:
 	_update_camera(delta)
 	_update_butterflies(delta)
+	_update_chickens(delta)
 	_check_bird_stop()
 	_cleanup_fallen()
 	_check_win_lose()
@@ -213,6 +220,7 @@ func load_level(idx: int) -> void:
 	birds.clear()
 	pigs.clear()
 	blocks.clear()
+	chickens.clear()
 	active_bird = null
 	drag_bird = null
 	is_dragging = false
@@ -338,9 +346,9 @@ func _handle_release() -> void:
 		drag_bird = null
 		active_bird.freeze = false
 		active_bird.game_state = "flying"
+		active_bird.launch_time = Time.get_ticks_msec() / 1000.0
 		active_bird.linear_velocity = d * launch_power
 		active_bird.angular_velocity = sign(d.x) * 2.5
-		launch_time = Time.get_ticks_msec() / 1000.0
 	else:
 		drag_bird.position = SLING
 
@@ -357,14 +365,18 @@ func _check_bird_stop() -> void:
 	var now := Time.get_ticks_msec() / 1000.0
 	for b in birds:
 		var node = b.node
-		if node and b.state != "used" and node.game_state == "flying":
-			if (now - launch_time > 2.3 and node.linear_velocity.length() < 28.0 and abs(node.angular_velocity) < 0.25) or node.position.y > 1000 or node.position.x < -500 or node.position.x > _world_right_wall_x() + 250.0:
-				b.state = "used"
+		if node and is_instance_valid(node) and node.game_state == "flying":
+			if (now - node.launch_time > 2.3 and node.linear_velocity.length() < 28.0 and abs(node.angular_velocity) < 0.25) or node.position.y > 1000 or node.position.x < -500 or node.position.x > _world_right_wall_x() + 250.0:
 				if node == active_bird:
+					b.state = "used"
 					active_bird = null
 					node.queue_free()
 					await get_tree().create_timer(0.55).timeout
 					_load_next_bird()
+				else:
+					b.state = "used"
+					node.queue_free()
+					b.node = null
 
 func _cleanup_fallen() -> void:
 	for block in blocks.duplicate():
@@ -429,6 +441,74 @@ func _on_pig_popped(pig: Node, pos: Vector2) -> void:
 	score += 5000
 	fx.burst(pos, [Color("#9be45f"), Color("#ffffff"), Color("#76f06d")], 36, 1.2, "spark")
 	pig.queue_free()
+
+func _update_chickens(delta: float) -> void:
+	if game_state not in ["PLAYING", "WAITING_WIN", "WAITING_LOSE", "WIN", "LOSE"]:
+		return
+		
+	while chickens.size() < 3:
+		_spawn_chicken()
+		
+	var cam_x := camera.position.x - VIEW.x * 0.5
+	for i in range(chickens.size() - 1, -1, -1):
+		var chicken = chickens[i]
+		if not is_instance_valid(chicken):
+			chickens.remove_at(i)
+			continue
+			
+		if chicken.state == "FLYING":
+			if chicken.position.x < cam_x - 500 or chicken.position.x > cam_x + VIEW.x + 500:
+				chickens.remove_at(i)
+				chicken.queue_free()
+
+func _spawn_chicken() -> void:
+	var cam_x := camera.position.x - VIEW.x * 0.5
+	var x := cam_x - 200 if randf() > 0.5 else cam_x + VIEW.x + 200
+	var y := randf_range(VIEW.y * 0.25, VIEW.y * 0.75)
+	
+	var chicken := ChickenScene.new()
+	chicken.position = Vector2(x, y)
+	chicken.setup(chicken_flying_texture, chicken_shot_texture)
+	chicken.chicken_shot.connect(_on_chicken_shot)
+	chicken.chicken_grounded.connect(_on_chicken_grounded)
+	world_root.add_child(chicken)
+	chickens.append(chicken)
+
+func _on_chicken_shot(chicken: Node, bird: Node) -> void:
+	# Bird disappears with splash
+	var palette: Array = {"bird_s":[Color("#ff3a3a"), Color("#ffac8c"), Color("#ffebd2")], "bird_m":[Color("#ffe845"), Color("#ffb226"), Color("#fff8b2")], "bird_l":[Color("#aa1010"), Color("#ff785a"), Color("#5a0c0c")]}.get(bird.bird_type)
+	fx.burst(bird.global_position, palette, 15, 1.0, "spark")
+	
+	# Clean up bird
+	for b in birds:
+		if b.node == bird:
+			b.state = "used"
+			break
+	if active_bird == bird:
+		active_bird = null
+		get_tree().create_timer(0.55).timeout.connect(_load_next_bird)
+	
+	bird.queue_free()
+
+func _on_chicken_grounded(chicken: Node, bird_type: String, radius: float) -> void:
+	# Dramatic splash
+	fx.burst(chicken.global_position, [Color("#ffffff"), Color("#ffecd2"), Color("#ffc880")], 40, 1.8, "spark")
+	
+	# Respawn 10 birds
+	for i in 10:
+		var node := BirdScene.new()
+		node.position = chicken.global_position
+		node.setup(bird_type, radius)
+		node.strong_impact.connect(_on_bird_impact)
+		world_root.add_child(node)
+		
+		var angle := randf_range(-PI, 0) # Mostly upwards
+		var speed := randf_range(500, 1000)
+		node.linear_velocity = Vector2(cos(angle), sin(angle)) * speed
+		node.game_state = "flying"
+		node.launch_time = Time.get_ticks_msec() / 1000.0 # Add launch_time to Bird node if needed, or use a local one
+		
+		birds.append({"type": bird_type, "state": "used", "node": node})
 
 func _on_bird_impact(pos: Vector2, force: float, type: String) -> void:
 	var palette: Array = {"bird_s":[Color("#ff3a3a"), Color("#ffac8c"), Color("#ffebd2")], "bird_m":[Color("#ffe845"), Color("#ffb226"), Color("#fff8b2")], "bird_l":[Color("#aa1010"), Color("#ff785a"), Color("#5a0c0c")]}.get(type)
