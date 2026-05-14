@@ -536,11 +536,13 @@ func _on_chicken_grounded(chicken: Node, bird_type: String, radius: float) -> vo
 	# Dramatic splash
 	fx.burst(chicken.global_position, [Color("#ffffff"), Color("#ffecd2"), Color("#ffc880")], 40, 1.8, "spark")
 	
-	# Respawn 10 birds
-	for i in 10:
+	# Respawn birds (7 for initial shot, 3 for chain reaction)
+	var bird_count := 3 if chicken.was_hit_by_bonus else 7
+	for i in bird_count:
 		var node := BirdScene.new()
 		node.position = chicken.global_position
 		node.setup(bird_type, radius)
+		node.is_bonus = true # Mark as bonus bird
 		node.strong_impact.connect(_on_bird_impact)
 		world_root.add_child(node)
 		

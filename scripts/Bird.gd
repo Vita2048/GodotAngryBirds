@@ -10,6 +10,7 @@ var squash := 0.0
 var squash_time := 0.0
 var life_time := 0.0
 var launch_time := 0.0
+var is_bonus := false
 
 func setup(p_type: String, p_radius: float) -> void:
 	bird_type = p_type

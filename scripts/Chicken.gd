@@ -16,6 +16,7 @@ var shot_bird_type := "bird_s"
 var shot_bird_radius := 16.0
 var scale_val := 0.6
 var can_change_direction := true
+var was_hit_by_bonus := false
 
 const FLY_SPEED := 120.0
 const CHANGE_TIME := 2.0
@@ -58,6 +59,15 @@ func _process_flying(delta: float) -> void:
 		_pick_new_target_velocity()
 	
 	velocity = velocity.lerp(target_velocity, delta * 2.0)
+	
+	# Avoid slingshot (radius ~250)
+	var sling_pos := Vector2(250, 570)
+	var dist_to_sling := position.distance_to(sling_pos)
+	if dist_to_sling < 250.0:
+		var steer_dir := (position - sling_pos).normalized()
+		var strength := remap(dist_to_sling, 0, 250, 400, 0)
+		velocity += steer_dir * strength * delta
+		
 	position += velocity * delta
 	
 	if abs(velocity.x) > 5.0:
@@ -105,6 +115,7 @@ func _on_body_entered(body: Node) -> void:
 		frame_timer = 0.0
 		shot_bird_type = body.get("bird_type")
 		shot_bird_radius = body.get("radius")
+		was_hit_by_bonus = body.get("is_bonus") == true
 		# Give it some initial hit momentum and a pop up
 		velocity = body.linear_velocity * 0.15
 		velocity.y = -200.0 # Pop up
