@@ -214,6 +214,9 @@ func _process(delta: float) -> void:
 	_check_bird_stop()
 	_cleanup_fallen()
 	_check_win_lose()
+	
+	if game_state == "PLAYING" and not _is_board_active() and not drag_bird and _queued_bird_count() > 0:
+		_load_next_bird()
 	if fx.particles.size() > 600:
 		fx.particles.remove_at(0)
 	queue_redraw()
@@ -276,6 +279,8 @@ func _add_static_rect(pos: Vector2, size: Vector2) -> void:
 
 func _load_next_bird() -> void:
 	if game_state not in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
+		return
+	if is_instance_valid(drag_bird) or _is_board_active():
 		return
 	for b in birds:
 		if b.state == "slingshot":
@@ -377,11 +382,10 @@ func _update_camera(_delta: float) -> void:
 func _check_bird_stop() -> void:
 	if game_state not in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
 		return
-	var now := Time.get_ticks_msec() / 1000.0
 	for b in birds:
 		var node = b.node
 		if node and is_instance_valid(node) and node.game_state == "flying":
-			if (now - node.launch_time > 2.3 and node.linear_velocity.length() < 28.0 and abs(node.angular_velocity) < 0.25) or node.position.y > 1000 or node.position.x < -500 or node.position.x > _world_right_wall_x() + 250.0:
+			if _is_bird_stopped(node):
 				if node == active_bird:
 					b.state = "used"
 					active_bird = null
@@ -392,6 +396,20 @@ func _check_bird_stop() -> void:
 					b.state = "used"
 					node.queue_free()
 					b.node = null
+
+func _is_bird_stopped(node: Node) -> bool:
+	if not node or not is_instance_valid(node):
+		return true
+	var now := Time.get_ticks_msec() / 1000.0
+	var launch_t = node.get("launch_time") if node.has_method("get") else 0.0
+	var vel = node.linear_velocity if "linear_velocity" in node else Vector2.ZERO
+	var ang_vel = node.angular_velocity if "angular_velocity" in node else 0.0
+	
+	if (now - launch_t > 2.3 and vel.length() < 28.0 and abs(ang_vel) < 0.9):
+		return true
+	if node.position.y > 1000 or node.position.x < -500 or node.position.x > _world_right_wall_x() + 250.0:
+		return true
+	return false
 
 func _cleanup_fallen() -> void:
 	for block in blocks.duplicate():
@@ -407,8 +425,9 @@ func _cleanup_fallen() -> void:
 				pig.queue_free()
 
 func _check_win_lose() -> void:
-	if game_state != "PLAYING":
+	if game_state != "PLAYING" and game_state != "WAITING_LOSE":
 		return
+		
 	if pigs.is_empty():
 		game_state = "WAITING_WIN"
 		await get_tree().create_timer(1.0).timeout
@@ -417,10 +436,14 @@ func _check_win_lose() -> void:
 			score += _queued_bird_count() * 10000
 			fx.confetti(Rect2(camera.position.x - 500, 30, 1000, 80))
 	elif _live_bird_count() == 0:
-		game_state = "WAITING_LOSE"
-		await get_tree().create_timer(1.8).timeout
-		if game_state == "WAITING_LOSE":
-			game_state = "LOSE" if not pigs.is_empty() else "WIN"
+		if game_state == "PLAYING":
+			game_state = "WAITING_LOSE"
+			await get_tree().create_timer(1.8).timeout
+			if game_state == "WAITING_LOSE":
+				if _live_bird_count() == 0:
+					game_state = "LOSE" if not pigs.is_empty() else "WIN"
+				else:
+					game_state = "PLAYING"
 
 func _queued_bird_count() -> int:
 	var count := 0
@@ -432,9 +455,25 @@ func _queued_bird_count() -> int:
 func _live_bird_count() -> int:
 	var count := 0
 	for b in birds:
-		if b.state in ["queue", "slingshot"] or (b.node and is_instance_valid(b.node) and b.node.game_state == "flying"):
+		if b.state in ["queue", "slingshot"]:
 			count += 1
+		elif b.node and is_instance_valid(b.node):
+			count += 1
+	if _any_chicken_falling():
+		count += 1
 	return count
+
+func _is_board_active() -> bool:
+	for b in birds:
+		if b.node and is_instance_valid(b.node):
+			return true
+	return _any_chicken_falling()
+
+func _any_chicken_falling() -> bool:
+	for c in chickens:
+		if is_instance_valid(c) and c.state in ["SHOT", "FALLING"]:
+			return true
+	return false
 
 func _on_block_damaged(pos: Vector2, type: String, force: float) -> void:
 	var palette: Array = {"glass":[Color("#bdf0ff"), Color.WHITE, Color("#76ceff")], "stone":[Color("#858982"), Color("#c6c4b7"), Color("#555a55")], "wood":[Color("#a6642d"), Color("#db9a4c"), Color("#743e18")]}.get(type)
@@ -553,6 +592,9 @@ func _on_chicken_grounded(chicken: Node, bird_type: String, radius: float) -> vo
 		node.launch_time = Time.get_ticks_msec() / 1000.0 # Add launch_time to Bird node if needed, or use a local one
 		
 		birds.append({"type": bird_type, "state": "used", "node": node})
+	
+	if game_state == "WAITING_LOSE":
+		game_state = "PLAYING"
 
 func _on_bird_impact(pos: Vector2, force: float, type: String) -> void:
 	# Reduce particle count if there are already many particles
