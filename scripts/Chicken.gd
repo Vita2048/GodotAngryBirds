@@ -15,6 +15,7 @@ var direction_change_timer := 0.0
 var shot_bird_type := "bird_s"
 var shot_bird_radius := 16.0
 var scale_val := 0.6
+var can_change_direction := true
 
 const FLY_SPEED := 120.0
 const CHANGE_TIME := 2.0
@@ -53,7 +54,7 @@ var last_flip := 1.0
 
 func _process_flying(delta: float) -> void:
 	direction_change_timer -= delta
-	if direction_change_timer <= 0:
+	if direction_change_timer <= 0 and can_change_direction:
 		_pick_new_target_velocity()
 	
 	velocity = velocity.lerp(target_velocity, delta * 2.0)

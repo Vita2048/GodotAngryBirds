@@ -19,14 +19,16 @@ func setup(p_type: String, p_radius: float) -> void:
 	linear_damp = 0.05
 	angular_damp = 0.08
 	contact_monitor = true
-	max_contacts_reported = 8
-	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
+	max_contacts_reported = 4 # Reduced from 8
+	continuous_cd = RigidBody2D.CCD_MODE_DISABLED # Default to disabled
 	var shape := CircleShape2D.new()
 	shape.radius = radius
 	var collision := CollisionShape2D.new()
 	collision.shape = shape
 	add_child(collision)
 	body_entered.connect(_on_body_entered)
+	if bird_type == "bird_l": # Only big bird really needs CCD
+		continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
 
 func _physics_process(delta: float) -> void:
 	life_time += delta

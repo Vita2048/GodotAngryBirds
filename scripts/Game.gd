@@ -39,6 +39,9 @@ var camera: Camera2D
 var ui_layer: CanvasLayer
 var ui: Control
 var launch_power := 15.08
+var focus_target: Node2D
+var focus_pos: Vector2
+var focus_timer := 0.0
 
 func _ready() -> void:
 	randomize()
@@ -206,9 +209,13 @@ func _process(delta: float) -> void:
 	_update_camera(delta)
 	_update_butterflies(delta)
 	_update_chickens(delta)
+	if focus_timer > 0:
+		focus_timer -= delta
 	_check_bird_stop()
 	_cleanup_fallen()
 	_check_win_lose()
+	if fx.particles.size() > 600:
+		fx.particles.remove_at(0)
 	queue_redraw()
 	ui.queue_redraw()
 
@@ -355,8 +362,16 @@ func _handle_release() -> void:
 
 func _update_camera(_delta: float) -> void:
 	var target_x := VIEW.x * 0.5
-	if active_bird and active_bird.game_state == "flying":
-		target_x = clamp(active_bird.position.x, VIEW.x * 0.5, _max_camera_x())
+	var target_y := VIEW.y * 0.5
+	
+	if is_instance_valid(focus_target):
+		target_x = focus_target.position.x
+	elif focus_timer > 0:
+		target_x = focus_pos.x
+	elif active_bird and is_instance_valid(active_bird) and active_bird.game_state == "flying":
+		target_x = active_bird.position.x
+	
+	target_x = clamp(target_x, VIEW.x * 0.5, _max_camera_x())
 	camera.position = Vector2(target_x, VIEW.y * 0.5)
 
 func _check_bird_stop() -> void:
@@ -446,10 +461,10 @@ func _update_chickens(delta: float) -> void:
 	if game_state not in ["PLAYING", "WAITING_WIN", "WAITING_LOSE", "WIN", "LOSE"]:
 		return
 		
-	while chickens.size() < 3:
-		_spawn_chicken()
-		
 	var cam_x := camera.position.x - VIEW.x * 0.5
+	var margin := VIEW.x * 0.1
+	var active_count := 0
+	
 	for i in range(chickens.size() - 1, -1, -1):
 		var chicken = chickens[i]
 		if not is_instance_valid(chicken):
@@ -457,24 +472,47 @@ func _update_chickens(delta: float) -> void:
 			continue
 			
 		if chicken.state == "FLYING":
-			if chicken.position.x < cam_x - 500 or chicken.position.x > cam_x + VIEW.x + 500:
+			# Count chickens that are visible or moving into the view
+			var on_screen = chicken.position.x > cam_x - 50 and chicken.position.x < cam_x + VIEW.x + 50
+			var moving_in = (chicken.position.x < cam_x and chicken.velocity.x > 0) or (chicken.position.x > cam_x + VIEW.x and chicken.velocity.x < 0)
+			
+			if on_screen or moving_in:
+				active_count += 1
+				
+			# Edge check for direction change (10% margin)
+			chicken.can_change_direction = (chicken.position.x > cam_x + margin and chicken.position.x < cam_x + VIEW.x - margin)
+			
+			if chicken.position.x < cam_x - 800 or chicken.position.x > cam_x + VIEW.x + 800:
 				chickens.remove_at(i)
 				chicken.queue_free()
 
+	while active_count < 3:
+		_spawn_chicken()
+		active_count += 1
+
 func _spawn_chicken() -> void:
 	var cam_x := camera.position.x - VIEW.x * 0.5
-	var x := cam_x - 200 if randf() > 0.5 else cam_x + VIEW.x + 200
+	var from_left := randf() > 0.5
+	var x := cam_x - 60 if from_left else cam_x + VIEW.x + 60
 	var y := randf_range(VIEW.y * 0.25, VIEW.y * 0.75)
 	
 	var chicken := ChickenScene.new()
 	chicken.position = Vector2(x, y)
 	chicken.setup(chicken_flying_texture, chicken_shot_texture)
+	
+	# Ensure initial direction is into the screen
+	var speed := randf_range(100.0, 180.0)
+	chicken.target_velocity = Vector2(speed if from_left else -speed, randf_range(-40.0, 40.0))
+	chicken.velocity = chicken.target_velocity
+	
 	chicken.chicken_shot.connect(_on_chicken_shot)
 	chicken.chicken_grounded.connect(_on_chicken_grounded)
 	world_root.add_child(chicken)
 	chickens.append(chicken)
 
 func _on_chicken_shot(chicken: Node, bird: Node) -> void:
+	focus_target = chicken
+	focus_timer = 0.0
 	# Bird disappears with splash
 	var palette: Array = {"bird_s":[Color("#ff3a3a"), Color("#ffac8c"), Color("#ffebd2")], "bird_m":[Color("#ffe845"), Color("#ffb226"), Color("#fff8b2")], "bird_l":[Color("#aa1010"), Color("#ff785a"), Color("#5a0c0c")]}.get(bird.bird_type)
 	fx.burst(bird.global_position, palette, 15, 1.0, "spark")
@@ -491,6 +529,10 @@ func _on_chicken_shot(chicken: Node, bird: Node) -> void:
 	bird.queue_free()
 
 func _on_chicken_grounded(chicken: Node, bird_type: String, radius: float) -> void:
+	focus_pos = chicken.global_position
+	focus_timer = 2.0 # Stay on explosion for 2 seconds
+	if focus_target == chicken:
+		focus_target = null
 	# Dramatic splash
 	fx.burst(chicken.global_position, [Color("#ffffff"), Color("#ffecd2"), Color("#ffc880")], 40, 1.8, "spark")
 	
@@ -511,8 +553,13 @@ func _on_chicken_grounded(chicken: Node, bird_type: String, radius: float) -> vo
 		birds.append({"type": bird_type, "state": "used", "node": node})
 
 func _on_bird_impact(pos: Vector2, force: float, type: String) -> void:
+	# Reduce particle count if there are already many particles
+	var count := clampi(int(force / 3.0), 3, 12)
+	if fx.particles.size() > 400:
+		count = clampi(count / 2, 2, 6)
+	
 	var palette: Array = {"bird_s":[Color("#ff3a3a"), Color("#ffac8c"), Color("#ffebd2")], "bird_m":[Color("#ffe845"), Color("#ffb226"), Color("#fff8b2")], "bird_l":[Color("#aa1010"), Color("#ff785a"), Color("#5a0c0c")]}.get(type)
-	fx.burst(pos, palette, clampi(int(force / 2.0), 4, 18), 0.7, "spark")
+	fx.burst(pos, palette, count, 0.7, "spark")
 
 func _draw() -> void:
 	_draw_sky()
@@ -521,9 +568,11 @@ func _draw() -> void:
 	_draw_sling()
 
 func _draw_sky() -> void:
+	var cam_x := camera.position.x - VIEW.x * 0.5
+	var cam_y := camera.position.y - VIEW.y * 0.5
+	draw_rect(Rect2(cam_x - 2000, cam_y - 1000, WORLD_WIDTH + 4000, 3000), SKY_COLOR, true)
 	if not background_texture:
 		return
-	var cam_x := camera.position.x - VIEW.x * 0.5
 	var tex_w := background_texture.get_size().x
 	var tex_h := background_texture.get_size().y
 	var scale := 720.0 / tex_h
@@ -541,7 +590,8 @@ func _draw_sun() -> void:
 	if not sun_texture:
 		return
 	var cam_x := camera.position.x - VIEW.x * 0.5
-	var sun_pos := Vector2(cam_x + 1150, 110)
+	var cam_y := camera.position.y - VIEW.y * 0.5
+	var sun_pos := Vector2(cam_x + 1150, cam_y + 110)
 	var t := Time.get_ticks_msec() * 0.001
 	var pulse : float = sin(t * 1.5) # Reduced speed to match 0.025 * 60 approx
 	var scale_val : float = remap(pulse, -1.0, 1.0, 0.9, 1.1)

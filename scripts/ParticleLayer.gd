@@ -17,6 +17,8 @@ func burst(pos: Vector2, palette: Array, count: int, power := 1.0, kind := "spar
 			"rv": randf_range(-7.0, 7.0),
 			"kind": kind
 		})
+	if particles.size() > 500:
+		particles = particles.slice(-500)
 	queue_redraw()
 
 func confetti(rect: Rect2) -> void:
@@ -39,7 +41,7 @@ func _process(delta: float) -> void:
 		var p := particles[i]
 		p.v += Vector2(0, 420.0) * delta
 		p.p += p.v * delta
-		p.rot += p.rv * delta
+		p.rot += p.rv * delta * 0.5 # Slower rotation
 		p.life -= delta
 		particles[i] = p
 		if p.life <= 0.0:
