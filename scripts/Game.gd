@@ -30,6 +30,10 @@ const MAX_DRAG := 100.0
 const GROUND_SCROLL_WIDTH := 520.0
 const SKY_DECORATION_BOTTOM := VIEW.y * 0.30
 const SKY_COLOR := Color("#76c7ff")
+const BLOCK_POINTS := 7
+const PIG_POINTS := 50
+const CRATE_POINTS := 10
+const UNUSED_BIRD_POINTS := 100
 
 var background_texture: Texture2D
 var butterfly_texture: Texture2D
@@ -50,6 +54,13 @@ var game_state := "START"
 var current_level := 0
 var score := 0
 var level_start_score := 0
+var attempt_score := 0
+var level_generation := 0
+var result_level_score := 0
+var result_destruction_score := 0
+var result_bonus := 0
+var result_previous_total := 0
+var result_elapsed := 0.0
 var launch_time := 0.0
 var world_root: Node2D
 var fx: ParticleLayer
@@ -327,6 +338,7 @@ func _build_levels() -> void:
 		level["props"] = []
 
 func _process(delta: float) -> void:
+	if game_state in ["WIN", "LOSE"]: result_elapsed += delta
 	shake = maxf(0.0, shake - delta * 22.0)
 	band_recoil = maxf(0, band_recoil - delta)
 	_update_camera(delta)
@@ -353,6 +365,14 @@ func _process(delta: float) -> void:
 	ui.queue_redraw()
 
 func load_level(idx: int) -> void:
+	level_generation += 1
+	# Only completed levels contribute to the campaign total.
+	score = level_start_score
+	attempt_score = 0
+	result_level_score = 0
+	result_destruction_score = 0
+	result_bonus = 0
+	result_elapsed = 0.0
 	menu_panel.hide()
 	for child in world_root.get_children():
 		child.queue_free()
@@ -384,6 +404,8 @@ func load_level(idx: int) -> void:
 		block.position = Vector2(b.x, b.y)
 		block.illustrated = painted
 		block.setup(b.type, Vector2(b.w, b.h), b.get("angle", 0.0))
+		# Let authored stacks settle without interpreting overlap correction as a hit.
+		block.collision_damage_enabled = false
 		block.damaged.connect(_on_block_damaged)
 		if painted: block.debris.connect(fx.surface_hit)
 		block.destroyed.connect(_on_block_destroyed)
@@ -513,6 +535,8 @@ func _handle_release() -> void:
 	var d := SLING - drag_bird.position
 	var launching := d.length() > 20.0
 	if launching:
+		for block in blocks:
+			if is_instance_valid(block): block.collision_damage_enabled = true
 		active_bird = drag_bird
 		drag_bird = null
 		active_bird.freeze = false
@@ -551,8 +575,9 @@ func _check_bird_stop() -> void:
 					b.state = "used"
 					active_bird = null
 					node.queue_free()
+					var generation := level_generation
 					await get_tree().create_timer(0.55).timeout
-					_load_next_bird()
+					if generation == level_generation: _load_next_bird()
 				else:
 					b.state = "used"
 					node.queue_free()
@@ -581,7 +606,7 @@ func _cleanup_fallen() -> void:
 	for pig in pigs.duplicate():
 		if not is_instance_valid(pig) or pig.position.y > 1050:
 			pigs.erase(pig)
-			score += 5000
+			_award_points(PIG_POINTS)
 			if is_instance_valid(pig):
 				pig.queue_free()
 
@@ -591,21 +616,56 @@ func _check_win_lose() -> void:
 		
 	if pigs.is_empty():
 		game_state = "WAITING_WIN"
+		var generation := level_generation
 		await get_tree().create_timer(1.0).timeout
-		if game_state == "WAITING_WIN":
-			game_state = "WIN"
+		if generation == level_generation and game_state == "WAITING_WIN":
+			_finish_attempt(true)
 			audio.play("win")
-			score += _queued_bird_count() * 10000
 			fx.confetti(Rect2(camera.position.x - 500, 30, 1000, 80))
 	elif _live_bird_count() == 0:
 		if game_state == "PLAYING":
 			game_state = "WAITING_LOSE"
+			var generation := level_generation
 			await get_tree().create_timer(1.8).timeout
-			if game_state == "WAITING_LOSE":
+			if generation == level_generation and game_state == "WAITING_LOSE":
 				if _live_bird_count() == 0:
-					game_state = "LOSE" if not pigs.is_empty() else "WIN"
+					_finish_attempt(pigs.is_empty())
 				else:
 					game_state = "PLAYING"
+
+func _award_points(value: int) -> bool:
+	if game_state not in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
+		return false
+	attempt_score += value
+	score = level_start_score + attempt_score
+	return true
+
+func _finish_attempt(won: bool) -> void:
+	if game_state not in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]: return
+	result_previous_total = level_start_score
+	result_destruction_score = attempt_score
+	result_bonus = 0
+	result_elapsed = 0.0
+	if won:
+		var unused := 0
+		for bird in birds:
+			if bird.state in ["queue", "slingshot"]: unused += 1
+		result_bonus = unused * UNUSED_BIRD_POINTS
+		_award_points(result_bonus)
+		result_level_score = attempt_score
+		level_start_score = score
+	else:
+		result_level_score = attempt_score
+		score = level_start_score
+		attempt_score = 0
+	game_state = "WIN" if won else "LOSE"
+
+func _score_transfer_progress() -> float:
+	return smoothstep(0.0, 1.0, clampf((result_elapsed - 0.65) / 1.15, 0.0, 1.0))
+
+func _displayed_total() -> int:
+	if game_state != "WIN": return level_start_score
+	return result_previous_total + roundi(result_level_score * _score_transfer_progress())
 
 func _queued_bird_count() -> int:
 	var count := 0
@@ -650,6 +710,7 @@ func _on_block_damaged(pos: Vector2, type: String, force: float) -> void:
 	audio.play(type, force/55.0)
 
 func _on_block_destroyed(block: Node, type: String, pos: Vector2) -> void:
+	if not blocks.has(block): return
 	if blocks.has(block):
 		blocks.erase(block)
 	if _is_painted_now():
@@ -662,8 +723,7 @@ func _on_block_destroyed(block: Node, type: String, pos: Vector2) -> void:
 			else:
 				bias = clampf(last.y/block.size.y,-0.3,0.3)
 		fx.fragments.call_deferred(block.global_position, type, block.size, block.rotation, block.linear_velocity, block.angular_velocity, bias)
-	score += 700
-	fx.score_popup(pos, "+700")
+	if _award_points(BLOCK_POINTS): fx.score_popup(pos, "+%d" % BLOCK_POINTS)
 	fx.impact(pos, 25)
 	shake = maxf(shake, 2.0)
 	_on_block_damaged(pos, type, 45.0)
@@ -673,10 +733,10 @@ func _on_pig_damaged(pos: Vector2, force: float) -> void:
 	fx.burst(pos, [Color("#9be45f"), Color("#d8ff9a"), Color("#4f8f35")], clampi(int(force / 3.0), 4, 14), 0.7, "spark")
 
 func _on_pig_popped(pig: Node, pos: Vector2) -> void:
+	if not pigs.has(pig): return
 	if pigs.has(pig):
 		pigs.erase(pig)
-	score += 5000
-	fx.score_popup(pos, "+5000")
+	if _award_points(PIG_POINTS): fx.score_popup(pos, "+%d" % PIG_POINTS)
 	audio.play("pig")
 	fx.impact(pos, 35)
 	if _is_painted_now():
@@ -815,8 +875,7 @@ func _resolve_explosion(prop: Node, pos: Vector2) -> void:
 	if not is_instance_valid(prop) or not props.has(prop): return
 	props.erase(prop)
 	prop.queue_free()
-	score += 1000
-	fx.score_popup(pos,"+1000")
+	if _award_points(CRATE_POINTS): fx.score_popup(pos,"+%d" % CRATE_POINTS)
 	audio.play("boom")
 	shake = 7.0
 	fx.impact(pos,70)
@@ -1030,7 +1089,9 @@ func _draw_ui() -> void:
 	if game_state == "START":
 		_draw_center_title(font)
 	elif game_state in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
-		_draw_text_fx(font, Vector2(30, 45), "LEVEL %d   SCORE %d" % [current_level + 1, score], HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1, 0.196, 0.196), 4.0, 4.0)
+		_draw_text_fx(font, Vector2(30, 45), "LEVEL %d" % (current_level + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1, 0.196, 0.196), 4.0, 4.0)
+		var center_x := get_viewport_rect().size.x * 0.5
+		_draw_score_hud(Rect2(center_x - 165, 10, 330, 68), attempt_score, level_start_score)
 		var x := 40.0
 		for b in birds:
 			if b.state == "queue":
@@ -1082,10 +1143,63 @@ func _draw_text_fx(font: Font, pos: Vector2, text: String, align: int, width: in
 	# 4. Main Red Fill
 	ui.draw_string(font, pos, text, align, width, size, color)
 
+func _score_card(rect: Rect2) -> void:
+	var card := StyleBoxFlat.new()
+	card.bg_color = Color("#fff8e8")
+	card.set_corner_radius_all(16)
+	card.shadow_color = Color(0,0,0,0.18)
+	card.shadow_size = 5
+	card.shadow_offset = Vector2(0,3)
+	ui.draw_style_box(card,rect)
+
+func _draw_score_hud(rect: Rect2, level_score: int, total_score: int) -> void:
+	var font := ThemeDB.fallback_font
+	var score_red := Color(1, 0.196, 0.196)
+	# Transparent panel: no fill, only a thin rounded outline so the sky
+	# shows through. Text keeps the LEVEL fx styling for readability.
+	var card := StyleBoxFlat.new()
+	card.bg_color = Color(1.0, 0.976, 0.910, 0.0)
+	card.set_corner_radius_all(14)
+	card.set_border_width_all(2)
+	card.border_color = Color(0.42, 0.24, 0.12, 0.60)
+	card.shadow_color = Color(0, 0, 0, 0.0)
+	card.shadow_size = 0
+	ui.draw_style_box(card, rect)
+	# Same font + fx styling as LEVEL (fallback font, red fill, white outline).
+	_draw_text_fx(font, rect.position + Vector2(0, 22), "SCORE", HORIZONTAL_ALIGNMENT_CENTER, int(rect.size.x), 15, score_red, 2.0, 3.0)
+	_draw_text_fx(font, rect.position + Vector2(12, 52), "Level: %d" % level_score, HORIZONTAL_ALIGNMENT_LEFT, 160, 19, score_red, 3.0, 3.0)
+	_draw_text_fx(font, rect.position + Vector2(rect.size.x - 12 - 140, 52), "Total: %d" % total_score, HORIZONTAL_ALIGNMENT_RIGHT, 140, 19, score_red, 3.0, 3.0)
+
+func _result_row(font: Font, rect: Rect2, y: float, label: String, value: int, size := 21, primary := false) -> void:
+	ui.draw_string(font,Vector2(rect.position.x+30,y),label,HORIZONTAL_ALIGNMENT_LEFT,-1,size,Color("#34494d"))
+	ui.draw_string(font,Vector2(rect.position.x+270,y),str(value),HORIZONTAL_ALIGNMENT_RIGHT,int(rect.size.x-300),size+5 if primary else size,Color("#d4422e") if primary else Color("#34494d"))
+
 func _draw_result(font: Font, title: String, button: String) -> void:
 	var vp := get_viewport_rect().size
-	_draw_text_fx(font, Vector2(0, 330), title, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 52, Color(1, 0.196, 0.196), 6.0, 8.0)
-	_draw_text_fx(font, Vector2(0, 374), "SCORE %d" % score, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), 26, Color(1, 0.196, 0.196), 4.0, 4.0)
+	var rect := Rect2(vp*0.5-Vector2(250,235),Vector2(500,470))
+	var top := rect.position.y
+	ui.draw_rect(Rect2(Vector2.ZERO,vp),Color(0.12,0.19,0.22,0.48))
+	_score_card(rect)
+	ui.draw_string(font,Vector2(rect.position.x,top+54),title,HORIZONTAL_ALIGNMENT_CENTER,500,32,Color("#d4422e"))
+	if game_state == "WIN":
+		_result_row(font,rect,top+108,"Destruction",result_destruction_score)
+		_result_row(font,rect,top+144,"Unused birds",result_bonus)
+		ui.draw_line(Vector2(rect.position.x+30,top+164),Vector2(rect.end.x-30,top+164),Color("#ded5c2"),1,true)
+	else:
+		ui.draw_string(font,Vector2(rect.position.x,top+123),"Give it another shot!",HORIZONTAL_ALIGNMENT_CENTER,500,21,Color("#5b6869"))
+	_result_row(font,rect,top+207,"Level score",result_level_score,28,true)
+	var note := "Not added to total"
+	if game_state == "WIN":
+		note = "Added to total" if result_elapsed >= 1.8 else "Adding level score..."
+	ui.draw_string(font,Vector2(rect.position.x+30,top+239),note,HORIZONTAL_ALIGNMENT_LEFT,-1,16,Color("#5b6869"))
+	ui.draw_line(Vector2(rect.position.x+30,top+268),Vector2(rect.end.x-30,top+268),Color("#ded5c2"),1,true)
+	_result_row(font,rect,top+312,"Total score",_displayed_total(),26)
+	# A single points token moves from the level value into the total; the
+	# real score is committed once, independently of this presentation.
+	if game_state == "WIN" and result_elapsed > 0.65 and result_elapsed < 1.8 and result_level_score > 0:
+		var progress := _score_transfer_progress()
+		var pos := Vector2(rect.end.x-108,top+222+progress*64)
+		ui.draw_string(font,pos,"+%d" % result_level_score,HORIZONTAL_ALIGNMENT_LEFT,-1,17,Color(0.83,0.26,0.18,sin(progress*PI)))
 	_draw_button(_get_ui_rect("result"), button)
 
 func _get_ui_rect(id: String) -> Rect2:
@@ -1093,7 +1207,7 @@ func _get_ui_rect(id: String) -> Rect2:
 	var cx := vp.x * 0.5
 	match id:
 		"play": return Rect2(cx - 100, 310, 200, 80)
-		"result": return Rect2(cx - 125, 410, 250, 76)
+		"result": return Rect2(cx - 125, vp.y * 0.5 + 150, 250, 64)
 		"menu": return Rect2(vp.x - 220, 20, 190, 48)
 	return Rect2()
 

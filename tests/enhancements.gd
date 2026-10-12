@@ -49,14 +49,21 @@ func _initialize() -> void:
 	await create_timer(0.2).timeout
 	check(scene.props.is_empty(), "Explosion did not chain")
 	check(scene.pigs.is_empty(), "Explosion did not damage nearby pig")
-	check(scene.score-before == 7000, "Explosion scored twice or incorrectly: %d" % (scene.score-before))
+	check(scene.score-before == 70, "Explosion scored twice or incorrectly: %d" % (scene.score-before))
 	check(scene.fx.particles.size() <= 500, "Particle cap exceeded")
 	await create_timer(1.1).timeout
 	check(scene.game_state == "WIN", "Chain reaction did not complete the level")
 	# A moving boulder must trigger a real physical impact on a crate.
 	scene.load_level(0)
 	await create_timer(1).timeout
-	var target = scene.props[0]
+	# Campaign layouts no longer contain props; create the collision fixture.
+	var target = load("res://scripts/SpecialProp.gd").new()
+	target.setup("crate")
+	target.position = Vector2(1100,646)
+	target.exploded.connect(scene._on_exploded)
+	scene.world_root.add_child(target)
+	scene.props.append(target)
+	await create_timer(0.8).timeout # Allow the crate's spawn protection to expire.
 	var boulder = load("res://scripts/SpecialProp.gd").new()
 	boulder.setup("boulder")
 	boulder.position = Vector2(1180,646)

@@ -16,3 +16,29 @@ Drag a bird from the sling and release to fire. Open **MENU** in the upper right
 
 Run `godot --headless --path . --script res://tests/enhancements.gd` to check level stability, chain reactions, scoring, completion, and boulder collisions. `tests/capture.gd` saves a rendered level preview when run with a graphical renderer.
 
+
+## Scoring and material damage
+
+The HUD shows a prominent Level score and a secondary Total score for completed
+levels. Win results break down destruction and unused-bird points and animate the
+level points into the total. Loss results retain the Level score with "Not added
+to total" and leave the Total score unchanged. Only winning
+banks an attempt, including 100 points for each unused bird (also one waiting
+in the sling). Losing or restarting discards attempt points; result screens cannot
+receive further points. A new campaign resets the bank. Blocks award 7 points,
+pigs award 50 (including fallen pigs), and explosive crates award 10.
+
+Block impacts use normal contact speed, solver impulse, and reduced mass, with
+separate glass, wood, and stone damage thresholds. Blocks settle without collision
+damage until the first launch. Existing cracks progressively deepen as health
+falls: grain splits in wood, connected radial fractures in glass, and irregular
+cracks and corner scuffs in stone. Small debris remains cosmetic.
+
+Run `godot --headless --path . --script res://tests/materials_scoring.gd` for retry,
+result locking, duplicate scoring, unused-bird bonus, stale timer, campaign settling,
+launch, physical mass-response, and progressive-fracture regression checks.
+Run `godot --path . --script res://tests/capture_materials.gd` to regenerate
+`tests/material-damage-preview.png` with three damage stages for each material.
+
+Run `godot --path . --script res://tests/capture_scores.gd` to regenerate the HUD,
+win, transfer, and loss score previews in `tests/score-*.jpg`.

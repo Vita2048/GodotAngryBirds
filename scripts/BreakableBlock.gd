@@ -16,6 +16,7 @@ var health := 50.0
 var max_health := 50.0
 var chip_cooldown := 0.0
 var spent := false
+var collision_damage_enabled := true
 
 func setup(p_material: String, p_size: Vector2, angle_radians := 0.0) -> void:
 	if illustrated: material = Art.hit_material()
@@ -36,7 +37,7 @@ func setup(p_material: String, p_size: Vector2, angle_radians := 0.0) -> void:
 	var collision := CollisionShape2D.new()
 	collision.shape = rect
 	add_child(collision)
-	body_entered.connect(_on_body_entered)
+
 
 func _physics_process(delta: float) -> void:
 	flash = maxf(0,flash-delta*8)
@@ -51,42 +52,48 @@ func _calc_health() -> float:
 	var hp: float = round(base * pow(min_side / 20.0, 0.9) * pow(area / 1600.0, 0.35))
 	return clamp(hp, round(base * 0.6), round(base * 8.0))
 
-func _on_body_entered(body: Node) -> void:
-	if spent: return
-	var other_velocity := Vector2.ZERO
-	if body is RigidBody2D:
-		other_velocity = body.linear_velocity
-	var force := (linear_velocity - other_velocity).length() * 0.075
-	var point := to_local(body.global_position)
-	var state := PhysicsServer2D.body_get_direct_state(get_rid())
-	if state:
-		for i in state.get_contact_count():
-			if state.get_contact_collider_id(i) == body.get_instance_id():
-				point = to_local(state.get_contact_local_position(i))
-				break
-	if force > 16.0:
-		mark_hit(point,force)
-		health -= force
-		if chip_cooldown <= 0.0:
-			var at := to_global(_clamp_point(point))
-			damaged.emit(at, material_type, force)
-			debris.emit(at,material_type,force,(at-global_position).normalized(),linear_velocity)
-			chip_cooldown = 0.10
+# Use the strongest normal contact per step. Tangential sliding does not
+# count as a head-on strike; reduced mass gives heavy objects more authority.
+func impact_damage(normal_speed: float, effective_mass: float) -> float:
+	var force := normal_speed * 0.075 * sqrt(clampf(effective_mass, 0.1, 4.0))
+	var threshold: float = {"glass": 9.0, "wood": 16.0, "stone": 23.0}[material_type]
+	return force if force > threshold else 0.0
+
+func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
+	if spent or not collision_damage_enabled or chip_cooldown > 0.0: return
+	var strongest := 0.0
+	var point := Vector2.ZERO
+	for i in state.get_contact_count():
+		var body := state.get_contact_collider_object(i)
+		var effective_mass := mass
+		if body is RigidBody2D:
+			effective_mass = mass * body.mass / (mass + body.mass)
+		var normal := state.get_contact_local_normal(i).normalized()
+		var relative := state.get_contact_local_velocity_at_position(i) - state.get_contact_collider_velocity_at_position(i)
+		# Solver impulse recovers impact severity when the reported velocity
+		# has already been resolved. Projection excludes friction impulses.
+		var speed := maxf(absf(relative.dot(normal)), absf(state.get_contact_impulse(i).dot(normal)) / maxf(effective_mass, 0.01))
+		var damage := impact_damage(speed, effective_mass)
+		if damage > strongest:
+			strongest = damage
+			point = to_local(state.get_contact_local_position(i))
+	if strongest > 0.0:
+		chip_cooldown = 0.10
+		_apply_damage(strongest, point)
+
+func _apply_damage(damage: float, point: Vector2) -> void:
+	if spent or damage <= 0.0: return
+	health -= damage
+	mark_hit(point, damage)
+	var at := to_global(_clamp_point(point))
+	damaged.emit(at, material_type, damage)
+	debris.emit(at, material_type, damage, (at-global_position).normalized(), linear_velocity)
 	if health <= 0.0:
 		spent = true
 		destroyed.emit(self, material_type, global_position)
 
 func take_blast(damage: float, source_position: Vector2 = Vector2.INF) -> void:
-	if spent: return
-	var point := Vector2.ZERO if source_position == Vector2.INF else to_local(source_position)
-	mark_hit(point,damage)
-	health -= damage
-	var at := to_global(_clamp_point(point))
-	damaged.emit(at, material_type, damage)
-	debris.emit(at,material_type,damage,(at-global_position).normalized(),linear_velocity)
-	if health <= 0:
-		spent = true
-		destroyed.emit(self, material_type, global_position)
+	_apply_damage(damage, Vector2.ZERO if source_position == Vector2.INF else to_local(source_position))
 
 func _clamp_point(point: Vector2) -> Vector2:
 	return Vector2(clampf(point.x,-size.x*0.48,size.x*0.48),clampf(point.y,-size.y*0.48,size.y*0.48))
@@ -95,14 +102,19 @@ func mark_hit(point: Vector2, strength := 25.0) -> void:
 	flash = 1.0
 	point = _clamp_point(point)
 	if illustrated: material.set_shader_parameter("impact_position",point)
-	if wounds.size() >= 7: return
-	wounds.append(point)
-	if not illustrated: return
-	var severity := clampf(strength/max_health,0.15,1.0)
-	if material_type == "wood":
-		_make_wood_fracture(point, severity)
-	else:
-		_make_glass_fracture(point, severity)
+	var nearby := false
+	for wound in wounds:
+		if wound.distance_to(point) < 12.0: nearby = true
+	if not nearby and wounds.size() < 7: wounds.append(point)
+	# Rebuild from stable seeds: existing cracks deepen and extend as health
+	# falls, even once the bounded number of impact sites has been reached.
+	fractures.clear()
+	var severity := clampf(maxf(1.0-health/max_health, strength/max_health), 0.08, 1.0)
+	for wound in wounds:
+		if material_type == "wood": _make_wood_fracture(wound, severity)
+		elif material_type == "glass": _make_glass_fracture(wound, severity)
+		else: _make_stone_fracture(wound, severity)
+	queue_redraw()
 
 # Wood fails along the grain: one main split running from the dent toward the
 # longer side (stair-stepped by alternating fiber runs and cross-grain jogs),
@@ -111,7 +123,7 @@ func mark_hit(point: Vector2, strength := 25.0) -> void:
 # repeated hits read as growing damage instead of full-length scratches.
 func _make_wood_fracture(point: Vector2, severity: float) -> void:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = int(size.x*37+size.y*71+point.x*191+point.y*139)+wounds.size()*997
+	rng.seed = int(size.x*37+size.y*71+point.x*191+point.y*139)
 	var horizontal := size.x >= size.y
 	var length := maxf(size.x,size.y)
 	var width := minf(size.x,size.y)
@@ -161,11 +173,11 @@ func _store_crack(cracks: Array, crack: Dictionary) -> void:
 # One stair-stepped run along the grain: mostly fiber-direction steps with an
 # occasional cross-grain jog where the split jumps to the next fiber bundle.
 func _stair_crack(rng: RandomNumberGenerator, start: Vector2, dir: float, total_len: float, bounds: Rect2, w0: float, kind: String) -> Dictionary:
-	var steps := clampi(int(total_len/5.0),3,9)
+	var steps := 9
 	var pts := PackedVector2Array([start])
 	var cursor := start
 	for i in steps:
-		cursor += Vector2(dir*rng.randf_range(2.5,6.5),rng.randf_range(-1.3,1.3))
+		cursor += Vector2(dir*(total_len/float(steps))*rng.randf_range(0.8,1.2),rng.randf_range(-1.3,1.3))
 		if rng.randf() < 0.24:
 			cursor.y += signf(rng.randf_range(-1.0,1.0))*rng.randf_range(2.0,4.5)
 		cursor = cursor.clamp(bounds.position,bounds.end)
@@ -174,7 +186,7 @@ func _stair_crack(rng: RandomNumberGenerator, start: Vector2, dir: float, total_
 
 func _make_glass_fracture(point: Vector2, severity: float) -> void:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = int(size.x*37+size.y*71+point.x*191+point.y*139)+wounds.size()*997+41
+	rng.seed = int(size.x*37+size.y*71+point.x*191+point.y*139)+41
 	var horizontal := size.x >= size.y
 	var length := maxf(size.x,size.y)
 	var width := minf(size.x,size.y)
@@ -187,12 +199,46 @@ func _make_glass_fracture(point: Vector2, severity: float) -> void:
 		var path := PackedVector2Array([origin])
 		var cursor := origin
 		for j in 5:
-			cursor += Vector2.from_angle(angle+rng.randf_range(-0.25,0.25))*rng.randf_range(3,9)
+			cursor += Vector2.from_angle(angle+rng.randf_range(-0.25,0.25))*rng.randf_range(3,9)*(0.35+severity*1.3)
 			cursor = cursor.clamp(bounds.position,bounds.end)
 			path.append(cursor)
-		cracks.append({"points":path,"w0":1.1,"w1":0.35,"kind":"ray"})
+		cracks.append({"points":path,"w0":0.6+severity,"w1":0.35,"kind":"ray"})
 		cracks.append({"points":PackedVector2Array([path[2],(path[2]+Vector2.from_angle(angle+0.7)*8).clamp(bounds.position,bounds.end)]),"w0":0.7,"w1":0.3,"kind":"ray"})
+	# Short bridges connect adjacent rays into a shattered pane network.
+	for ray in range(1, 6):
+		var previous: PackedVector2Array = cracks[(ray-1)*2]["points"]
+		var current: PackedVector2Array = cracks[ray*2]["points"]
+		cracks.append({"points":PackedVector2Array([previous[2],current[2]]),"w0":0.5+severity*0.5,"w1":0.3,"kind":"bridge"})
 	fractures.append({"cracks":cracks,"strength":severity,"origin":origin,"bruise":Vector2(3.0,2.2)})
+
+func _make_stone_fracture(point: Vector2, severity: float) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(point.x*191+point.y*139+size.x*37+size.y*71)
+	var cracks: Array = []
+	for ray in 3:
+		var pts := PackedVector2Array([point])
+		var cursor := point
+		var direction := Vector2.from_angle(float(ray)*TAU/3.0+rng.randf_range(-0.5,0.5))
+		for step in 5:
+			cursor = _clamp_point(cursor+direction.rotated(rng.randf_range(-0.6,0.6))*rng.randf_range(4,12)*(0.3+severity))
+			pts.append(cursor)
+		cracks.append({"points":pts,"w0":1.0+severity*2.5,"w1":0.4,"kind":"stone"})
+	fractures.append({"cracks":cracks,"strength":severity,"origin":point})
+
+func _draw_stone_damage() -> void:
+	for fracture in fractures:
+		var severity: float = fracture["strength"]
+		for crack in fracture["cracks"]:
+			var pts: PackedVector2Array = crack["points"]
+			draw_polyline(pts,Color(0.15,0.19,0.22,0.9),crack["w0"],true)
+			var lip := PackedVector2Array()
+			for p in pts: lip.append(p+Vector2(0,1.2))
+			draw_polyline(lip,Color(0.80,0.84,0.82,0.7),0.8,true)
+		var hit: Vector2 = fracture["origin"]
+		var corner := Vector2(signf(hit.x)*size.x*0.5,signf(hit.y)*size.y*0.5)
+		var chip := minf(9.0, minf(size.x,size.y)*0.3)*severity
+		if hit.distance_to(corner) < 22.0:
+			draw_colored_polygon(PackedVector2Array([corner,corner-Vector2(signf(hit.x)*chip,0),corner-Vector2(0,signf(hit.y)*chip)]),Color("#56616b"))
 
 func _draw() -> void:
 	if illustrated and material_type in ["wood","glass"]:
@@ -236,7 +282,9 @@ func _draw() -> void:
 		draw_line(rect.position+Vector2(5,5),Vector2(rect.position.x+5,rect.end.y-5),Color(0.9,1,1,0.8),2,true)
 		var center := Vector2.ZERO
 		draw_line(center-Vector2(size.x*0.23,size.y*0.30),center+Vector2(size.x*0.23,size.y*0.30),Color(1,1,1,0.6),3,true)
-	if ratio < 0.7:
+	if material_type == "stone":
+		_draw_stone_damage()
+	elif ratio < 0.7:
 		var points := PackedVector2Array([Vector2(-size.x*0.35,-size.y*0.35),Vector2(-size.x*0.08,size.y*0.1),Vector2(size.x*0.12,-size.y*0.1),Vector2(size.x*0.3,size.y*0.38)])
 		draw_polyline(points,edge,1.8,true)
 
@@ -308,7 +356,7 @@ func _draw_glass_crack(crack: Dictionary) -> void:
 	# ray bounces along the beam bounds.
 	var pts: PackedVector2Array = crack["points"]
 	if pts.size() < 2: return
-	draw_polyline(pts,Color(0.12,0.43,0.53,0.55),1.45,true)
+	draw_polyline(pts,Color(0.12,0.43,0.53,0.55),float(crack["w0"])+0.6,true)
 	draw_polyline(pts,Color(0.91,1,1,0.88),0.65,true)
 
 func _draw_painted() -> void:
