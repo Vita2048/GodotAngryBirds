@@ -8,9 +8,17 @@ const ChickenScene := preload("res://scripts/Chicken.gd")
 
 const SpecialProp := preload("res://scripts/SpecialProp.gd")
 const GameAudio := preload("res://scripts/GameAudio.gd")
+const PaintedArt := preload("res://scripts/PaintedArt.gd")
 var audio: GameAudio
 var props: Array = []
 var shake := 0.0
+# Painted (hybrid raster + vector) presentation on every campaign level.
+# Levels use the d29cfd3 birds/pigs/blocks layouts (no crates/boulders);
+# audio, scoring and shake stay. `illustrated` on bodies and `fx.illustrated`
+# only switch the drawing style.
+var sling_front: Node2D
+var sling_texture: Texture2D
+var band_recoil := 0.0
 var sound_slider: HSlider
 var sound_button: Button
 var menu_panel: PanelContainer
@@ -132,12 +140,29 @@ func _toggle_menu() -> void:
 		is_dragging = false
 		drag_bird.position = SLING
 
+func _wants_painted_graphics(level_idx: int) -> bool:
+	# Hybrid raster + vector look on every campaign level.
+	return true
+
+func _is_painted_now() -> bool:
+	return fx != null and fx.illustrated
+
+func _show_painted_chrome() -> bool:
+	# Sky veil and raster sling preview on the title screen (level 0) as well
+	# as in-game. After load_level, this matches fx.illustrated.
+	return _is_painted_now() or _wants_painted_graphics(current_level)
+
 func _load_assets() -> void:
 	background_texture = _load_texture("res://assets/ABBackgroundWide.png")
 	butterfly_texture = _load_texture("res://assets/Butterfly.png")
 	sun_texture = _load_texture("res://assets/SunSingle.png")
 	chicken_flying_texture = _load_texture("res://assets/ChickenFlyingL.png")
 	chicken_shot_texture = _load_texture("res://assets/ChickenShotL.png")
+	sling_texture = load("res://assets/sling-side.png") as Texture2D
+	# Pre-build the hue-shifted bird variants so the first yellow/big bird
+	# costs nothing at draw time.
+	PaintedArt.bird_texture("bird_m")
+	PaintedArt.bird_texture("bird_l")
 
 func _load_texture(path: String) -> Texture2D:
 	var texture := load(path) as Texture2D
@@ -157,6 +182,7 @@ func _build_scene() -> void:
 	camera.position_smoothing_speed = 5.0
 	add_child(camera)
 	fx = ParticleLayer.new()
+	fx.illustrated = true
 	fx.z_index = 10
 	world_root.add_child(fx)
 	ui_layer = CanvasLayer.new()
@@ -166,6 +192,12 @@ func _build_scene() -> void:
 	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui.draw.connect(_draw_ui)
 	ui_layer.add_child(ui)
+	# Front elastic band renders above the bird when the painted sling is used.
+	if sling_front == null:
+		sling_front = Node2D.new()
+		sling_front.z_index = 2
+		add_child(sling_front)
+		sling_front.draw.connect(_draw_front_band)
 
 func _make_butterflies() -> void:
 	for i in 3:
@@ -287,23 +319,26 @@ func _build_levels() -> void:
 		]}
 	]
 
-	# Optional tactical targets; the pigs remain the level objective.
-	levels[0]["props"] = [{"x":1040,"y":656,"type":"crate"}]
-	levels[1]["props"] = [{"x":1000,"y":656,"type":"crate"},{"x":1000,"y":610,"type":"crate"}]
-	levels[2].blocks.append({"x":790,"y":610,"w":18,"h":140,"type":"wood"})
-	levels[2].blocks.append({"x":798,"y":531,"w":125,"h":18,"type":"wood","angle":0.0})
-	levels[2]["props"] = [{"x":782,"y":488,"type":"boulder"},{"x":1160,"y":656,"type":"crate"}]
-	levels[3].blocks.append({"x":840,"y":620,"w":20,"h":120,"type":"wood"})
-	levels[3].blocks.append({"x":840,"y":551,"w":110,"h":18,"type":"wood"})
-	levels[3]["props"] = [{"x":840,"y":508,"type":"boulder"},{"x":1088,"y":656,"type":"crate"}]
-	levels[4]["props"] = [{"x":880,"y":656,"type":"crate"},{"x":1120,"y":656,"type":"crate"},{"x":890,"y":460,"type":"boulder"}]
+	# Reverted to the d29cfd3 layouts: birds/pigs/blocks only, no tactical
+	# crates/boulders and no extra boulder supports. Audio, scoring, shake and
+	# the SpecialProp/explosion code paths stay so sounds and scoring behave as
+	# before; each level keeps an empty props list for safe access.
+	for level in levels:
+		level["props"] = []
 
 func _process(delta: float) -> void:
 	shake = maxf(0.0, shake - delta * 22.0)
+	band_recoil = maxf(0, band_recoil - delta)
 	_update_camera(delta)
 	camera.offset = Vector2(sin(Time.get_ticks_msec()*0.063),cos(Time.get_ticks_msec()*0.079))*shake
 	_update_butterflies(delta)
 	_update_chickens(delta)
+	if _is_painted_now():
+		if is_instance_valid(sling_front): sling_front.queue_redraw()
+		# Live gaze for the painted face layer; vector pigs ignore it.
+		for pig in pigs:
+			if is_instance_valid(pig):
+				pig.gaze = (active_bird.position-pig.position).normalized() if is_instance_valid(active_bird) else Vector2(-0.6,0)
 	if focus_timer > 0:
 		focus_timer -= delta
 	_check_bird_stop()
@@ -321,7 +356,10 @@ func load_level(idx: int) -> void:
 	menu_panel.hide()
 	for child in world_root.get_children():
 		child.queue_free()
+	band_recoil = 0.0
+	var painted := _wants_painted_graphics(idx)
 	fx = ParticleLayer.new()
+	fx.illustrated = painted
 	fx.z_index = 10
 	world_root.add_child(fx)
 	birds.clear()
@@ -344,14 +382,17 @@ func load_level(idx: int) -> void:
 	for b in data.blocks:
 		var block := BlockScene.new()
 		block.position = Vector2(b.x, b.y)
+		block.illustrated = painted
 		block.setup(b.type, Vector2(b.w, b.h), b.get("angle", 0.0))
 		block.damaged.connect(_on_block_damaged)
+		if painted: block.debris.connect(fx.surface_hit)
 		block.destroyed.connect(_on_block_destroyed)
 		world_root.add_child(block)
 		blocks.append(block)
 	for p in data.pigs:
 		var pig := PigScene.new()
 		pig.position = Vector2(p.x, p.y)
+		pig.illustrated = painted
 		pig.setup(p.r)
 		pig.damaged.connect(_on_pig_damaged)
 		pig.popped.connect(_on_pig_popped)
@@ -360,6 +401,7 @@ func load_level(idx: int) -> void:
 	for spec in data.get("props", []):
 		var prop := SpecialProp.new()
 		prop.position = Vector2(spec.x, spec.y)
+		prop.illustrated = painted
 		prop.setup(spec.type)
 		prop.exploded.connect(_on_exploded)
 		prop.struck.connect(_on_boulder_hit)
@@ -378,6 +420,7 @@ func _add_boundaries() -> void:
 
 func _add_static_rect(pos: Vector2, size: Vector2) -> void:
 	var body := StaticBody2D.new()
+	body.collision_layer = 3
 	body.position = pos
 	var shape := RectangleShape2D.new()
 	shape.size = size
@@ -398,6 +441,7 @@ func _load_next_bird() -> void:
 		if b.state == "queue":
 			var node := BirdScene.new()
 			var radius: float = {"bird_s": 16.0, "bird_m": 22.0, "bird_l": 30.0}.get(b.type, 18.0)
+			node.illustrated = _wants_painted_graphics(current_level)
 			node.position = SLING
 			node.setup(b.type, radius)
 			node.freeze = true
@@ -467,7 +511,8 @@ func _handle_release() -> void:
 		return
 	is_dragging = false
 	var d := SLING - drag_bird.position
-	if d.length() > 20.0:
+	var launching := d.length() > 20.0
+	if launching:
 		active_bird = drag_bird
 		drag_bird = null
 		active_bird.freeze = false
@@ -476,6 +521,7 @@ func _handle_release() -> void:
 		audio.play("launch", d.length()/MAX_DRAG)
 		active_bird.linear_velocity = d * launch_power
 		active_bird.angular_velocity = sign(d.x) * 2.5
+		if _is_painted_now(): band_recoil = 0.34
 	else:
 		drag_bird.position = SLING
 
@@ -592,6 +638,11 @@ func _any_chicken_falling() -> bool:
 	return false
 
 func _on_block_damaged(pos: Vector2, type: String, force: float) -> void:
+	if _is_painted_now():
+		# Painted style relies on debris -> surface_hit for chips; skip the
+		# flat vector burst so impacts are not drawn twice.
+		audio.play(type,force/55.0)
+		return
 	var palette: Array = {"glass":[Color("#bdf0ff"), Color.WHITE, Color("#76ceff")], "stone":[Color("#858982"), Color("#c6c4b7"), Color("#555a55")], "wood":[Color("#a6642d"), Color("#db9a4c"), Color("#743e18")]}.get(type)
 	fx.burst(pos, palette, clampi(int(force / 2.0), 5, 18), 0.65, type)
 	if force > 25:
@@ -601,10 +652,20 @@ func _on_block_damaged(pos: Vector2, type: String, force: float) -> void:
 func _on_block_destroyed(block: Node, type: String, pos: Vector2) -> void:
 	if blocks.has(block):
 		blocks.erase(block)
+	if _is_painted_now():
+		# Tear the beam where it was last hit so the break matches the damage.
+		var bias := 0.0
+		if block.wounds.size() > 0:
+			var last: Vector2 = block.wounds[block.wounds.size()-1]
+			if block.size.x >= block.size.y:
+				bias = clampf(last.x/block.size.x,-0.3,0.3)
+			else:
+				bias = clampf(last.y/block.size.y,-0.3,0.3)
+		fx.fragments.call_deferred(block.global_position, type, block.size, block.rotation, block.linear_velocity, block.angular_velocity, bias)
 	score += 700
 	fx.score_popup(pos, "+700")
 	fx.impact(pos, 25)
-	shake = maxf(shake, 2)
+	shake = maxf(shake, 2.0)
 	_on_block_damaged(pos, type, 45.0)
 	block.queue_free()
 
@@ -618,7 +679,9 @@ func _on_pig_popped(pig: Node, pos: Vector2) -> void:
 	fx.score_popup(pos, "+5000")
 	audio.play("pig")
 	fx.impact(pos, 35)
-	fx.burst(pos, [Color("#9be45f"), Color("#ffffff"), Color("#76f06d")], 36, 1.2, "spark")
+	if _is_painted_now():
+		fx.burst(pos,[Color("#e7dac0")],8,0.75,"dust")
+	else: fx.burst(pos, [Color("#9be45f"), Color("#ffffff"), Color("#76f06d")], 36, 1.2, "spark")
 	pig.queue_free()
 
 func _update_chickens(delta: float) -> void:
@@ -709,6 +772,7 @@ func _on_chicken_grounded(chicken: Node, bird_type: String, radius: float) -> vo
 	for i in bird_count:
 		var node := BirdScene.new()
 		node.position = chicken.global_position
+		node.illustrated = _is_painted_now()
 		node.setup(bird_type, radius)
 		node.is_bonus = true # Mark as bonus bird
 		node.strong_impact.connect(_on_bird_impact)
@@ -756,9 +820,13 @@ func _resolve_explosion(prop: Node, pos: Vector2) -> void:
 	audio.play("boom")
 	shake = 7.0
 	fx.impact(pos,70)
-	fx.burst(pos,[Color("#ffe99a"),Color("#ffab42"),Color("#e95730")],38,1.65,"spark")
-	fx.burst(pos,[Color("#cc9854"),Color("#854a2c")],18,1.4,"wood")
-	fx.burst(pos,[Color(0.3,0.26,0.22,0.3)],16,0.6,"dust")
+	if _is_painted_now():
+		fx.explosion(pos)
+		fx.fragments(pos,"wood",Vector2(44,44),0,Vector2(0,-150))
+	else:
+		fx.burst(pos,[Color("#ffe99a"),Color("#ffab42"),Color("#e95730")],38,1.65,"spark")
+		fx.burst(pos,[Color("#cc9854"),Color("#854a2c")],18,1.4,"wood")
+		fx.burst(pos,[Color(0.3,0.26,0.22,0.3)],16,0.6,"dust")
 	for body in blocks.duplicate() + pigs.duplicate() + props.duplicate():
 		if not is_instance_valid(body) or body.is_queued_for_deletion(): continue
 		var offset: Vector2 = body.global_position - pos
@@ -766,7 +834,8 @@ func _resolve_explosion(prop: Node, pos: Vector2) -> void:
 		if distance > 210.0: continue
 		var power := 1.0-distance/210.0
 		body.apply_central_impulse((offset.normalized()+Vector2(0,-0.45))*power*950.0)
-		if body.has_method("take_blast"): body.take_blast(110.0*power)
+		if body is BlockScene: body.take_blast(110.0*power,pos)
+		elif body.has_method("take_blast"): body.take_blast(110.0*power)
 		elif body is SpecialProp and body.kind == "crate": body.detonate()
 
 func _draw() -> void:
@@ -793,6 +862,34 @@ func _draw_sky() -> void:
 	while x < end_x:
 		draw_texture_rect(background_texture, Rect2(x, 0, draw_w, 720), false)
 		x += draw_w
+	if _show_painted_chrome():
+		# Light atmospheric veil separates the detailed painted sprites from
+		# the background photo.
+		# Covers the whole visible area like the sky base: otherwise wide
+		# windows show an un-veiled darker strip with a hard seam where the
+		# veil starts (vertical at x=0) or ends (horizontal at y=680).
+		draw_rect(Rect2(cam_x - 2000,cam_y - 1000,WORLD_WIDTH + 4000,3000),Color(0.95,0.98,1,0.09))
+		# Soft contact shadows ground the painted structures. Positions follow
+		# the live level layout.
+		var anchors: Array[Vector2] = []
+		for pig in pigs:
+			if is_instance_valid(pig): anchors.append(Vector2(pig.position.x, 679))
+		for block in blocks:
+			if is_instance_valid(block): anchors.append(Vector2(block.position.x, 679))
+		for prop in props:
+			if is_instance_valid(prop): anchors.append(Vector2(prop.position.x, 679))
+		var seen: Array[float] = []
+		for anchor in anchors:
+			var rounded := snappedf(anchor.x, 40.0)
+			var dup := false
+			for s in seen:
+				if absf(s - rounded) < 40.0: dup = true
+			if dup: continue
+			seen.append(rounded)
+			draw_set_transform(Vector2(rounded,679),0,Vector2(1,0.12))
+			draw_circle(Vector2.ZERO,100,Color(0.15,0.21,0.13,0.22))
+			draw_set_transform(Vector2.ZERO)
+	# end painted sky extras
 
 func _draw_sun() -> void:
 	if not sun_texture:
@@ -857,7 +954,41 @@ func _visible_world_size() -> Vector2:
 		return Vector2(VIEW.y * viewport_aspect, VIEW.y)
 	return Vector2(VIEW.x, VIEW.x / viewport_aspect)
 
+func _pouch_position() -> Vector2:
+	if is_instance_valid(drag_bird): return drag_bird.position+Vector2(-24,16)
+	return SLING+Vector2(sin(band_recoil*65)*band_recoil*24,3)
+
+func _draw_band(canvas: Node2D, tip: Vector2, pull: Vector2, front: bool) -> void:
+	var length := tip.distance_to(pull)
+	var width := lerpf(5.0,3.0,clampf(length/110.0,0,1))
+	var points := PackedVector2Array()
+	for i in 9:
+		var t := float(i)/8
+		points.append(tip.lerp(pull,t)+Vector2(0,sin(t*PI)*maxf(0,5-length*0.08)))
+	canvas.draw_polyline(points,Color("#41271c"),width+2,true)
+	canvas.draw_polyline(points,Color("#bd8050") if front else Color("#865332"),width,true)
+	canvas.draw_polyline(points,Color(1,0.79,0.5,0.28),1,true)
+
+func _draw_front_band() -> void:
+	if sling_front == null: return
+	# Front band only exists for the painted side-view sling; the vector sling
+	# draws both bands in _draw_sling itself.
+	if not _show_painted_chrome(): return
+	var pull := _pouch_position()
+	_draw_band(sling_front,SLING+Vector2(11,2),pull,true)
+	if is_instance_valid(drag_bird):
+		sling_front.draw_arc(pull+Vector2(5,0),12,1.65,4.6,18,Color("#583525"),7,true)
+		sling_front.draw_arc(pull+Vector2(5,0),12,1.65,4.6,18,Color("#b98755"),1.2,true)
+
+func _draw_painted_sling() -> void:
+	if sling_texture == null: return
+	draw_texture_rect_region(sling_texture,Rect2(230,548,42,132),Rect2(383,78,280,1311))
+	_draw_band(self,SLING+Vector2(-10,-7),_pouch_position(),false)
+
 func _draw_sling() -> void:
+	if _show_painted_chrome():
+		_draw_painted_sling()
+		return
 	var rear_tip := SLING + Vector2(-20, -10)
 	var rear_base := SLING + Vector2(0, 60)
 	var trunk_top := SLING + Vector2(0, 50)
@@ -988,6 +1119,15 @@ func _draw_button(rect: Rect2, text: String) -> void:
 
 func _draw_bird_icon(pos: Vector2, type: String) -> void:
 	var radius := 16.0 if type == "bird_s" else (18.0 if type == "bird_m" else 20.0)
+	# Hybrid queue icons: same painted atlas body + live-style face as the
+	# sling bird, so the top-left queue matches the in-game look.
+	if PaintedArt.texture() != null:
+		ui.draw_circle(pos + Vector2(3, 4), radius * 1.05, Color(0, 0, 0, 0.20))
+		ui.draw_set_transform(pos, 0.0, Vector2.ONE)
+		PaintedArt.paint_bird(ui, type, Rect2(-radius * 1.35, -radius * 1.5, radius * 2.7, radius * 2.5))
+		PaintedArt.face(ui, radius, false, Vector2(0.8, 0), 0.0, 1.2)
+		ui.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		return
 	var body: Color = {"bird_s": Color("#f13434"), "bird_m": Color("#ffd83a"), "bird_l": Color("#9f1212")}.get(type)
 	var shade: Color = {"bird_s": Color("#9e1212"), "bird_m": Color("#c58b00"), "bird_l": Color("#520000")}.get(type)
 	var belly: Color = Color("#fff1a7") if type == "bird_m" else Color("#ffe9cf")

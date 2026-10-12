@@ -2,6 +2,11 @@ extends RigidBody2D
 
 signal exploded(prop: Node, at: Vector2)
 signal struck(at: Vector2, force: float)
+const Art := preload("res://scripts/PaintedArt.gd")
+var illustrated := false
+var scuffs: Array[Vector2] = []
+var flash := 0.0
+
 var kind := "crate"
 var armed := false
 var spent := false
@@ -9,6 +14,7 @@ var age := 0.0
 var cooldown := 0.0
 
 func setup(type: String) -> void:
+	if illustrated: material = Art.hit_material()
 	kind = type
 	mass = 5.0 if kind == "boulder" else 0.8
 	contact_monitor = true
@@ -17,6 +23,11 @@ func setup(type: String) -> void:
 	physics_material_override = PhysicsMaterial.new()
 	physics_material_override.friction = 0.65
 	physics_material_override.bounce = 0.08
+	if illustrated:
+		physics_material_override.bounce = 0.0
+		physics_material_override.friction = 0.85
+		linear_damp = 0.15
+		angular_damp = 1.8
 	var col := CollisionShape2D.new()
 	if kind == "boulder":
 		var shape := CircleShape2D.new()
@@ -31,9 +42,11 @@ func setup(type: String) -> void:
 
 func _physics_process(delta: float) -> void:
 	age += delta
+	flash = maxf(0,flash-delta*7)
+	if illustrated: material.set_shader_parameter("hit_flash", flash)
 	cooldown = maxf(0, cooldown - delta)
 	armed = age > 0.7
-	if kind == "crate": queue_redraw()
+	queue_redraw()
 
 func _hit(body: Node) -> void:
 	if not armed or spent: return
@@ -43,6 +56,8 @@ func _hit(body: Node) -> void:
 	if kind == "crate" and speed > 95.0:
 		detonate()
 	elif kind == "boulder" and speed > 85.0 and cooldown <= 0.0:
+		flash = 1
+		if scuffs.size()<6: scuffs.append(to_local(body.global_position).limit_length(25))
 		cooldown = 0.18
 		struck.emit(global_position, speed * 0.085)
 
@@ -52,6 +67,15 @@ func detonate() -> void:
 	exploded.emit(self, global_position)
 
 func _draw() -> void:
+	if illustrated:
+		if kind == "boulder":
+			Art.paint(self,"boulder",Rect2(-35,-35,70,70),Color.WHITE.lerp(Color("#fff1bd"),flash*0.5))
+			for point in scuffs:
+				draw_polyline(PackedVector2Array([point-Vector2(7,4),point+Vector2(0,3),point+Vector2(5,-2)]),Color("#d6e0df"),1.7,true)
+		else:
+			Art.paint(self,"crate",Rect2(-25,-33,50,57))
+			draw_circle(Vector2(4,-31),2+sin(age*12)*0.5,Color("#ffe4a0"))
+		return
 	if kind == "boulder":
 		draw_circle(Vector2(3, 5), 35, Color(0, 0, 0, 0.20))
 		draw_circle(Vector2.ZERO, 34, Color("#343e49"))

@@ -3,11 +3,19 @@ extends RigidBody2D
 signal damaged(at_position: Vector2, force: float)
 signal popped(pig: Node, at_position: Vector2)
 
+const Art := preload("res://scripts/PaintedArt.gd")
+var illustrated := false
+var gaze := Vector2(-0.6,0)
+var clock := 1.2
+var flash := 0.0
+var recoil := 0.0
+
 var radius := 25.0
 var health := 35.0
 var spent := false
 
 func setup(p_radius: float) -> void:
+	if illustrated: material = Art.hit_material()
 	radius = p_radius
 	mass = 1.0
 	physics_material_override = PhysicsMaterial.new()
@@ -23,6 +31,10 @@ func setup(p_radius: float) -> void:
 	body_entered.connect(_on_body_entered)
 
 func _physics_process(_delta: float) -> void:
+	clock += _delta
+	flash = maxf(0,flash-_delta*6)
+	if illustrated: material.set_shader_parameter("hit_flash", flash)
+	recoil = maxf(0,recoil-_delta*4)
 	queue_redraw()
 
 func _on_body_entered(body: Node) -> void:
@@ -32,6 +44,8 @@ func _on_body_entered(body: Node) -> void:
 		other_velocity = body.linear_velocity
 	var force := (linear_velocity - other_velocity).length() * 0.08
 	if force > 16.0:
+		flash = 1
+		recoil = 0.3
 		health -= force
 		damaged.emit(global_position, force)
 	if health <= 0.0:
@@ -40,6 +54,12 @@ func _on_body_entered(body: Node) -> void:
 
 func _draw() -> void:
 	var hurt: float = clamp(1.0 - health / 35.0, 0.0, 1.0)
+	if illustrated:
+		draw_set_transform(Vector2.ZERO,0,Vector2(1+recoil*0.22,1-recoil*0.17))
+		Art.paint(self,"pig",Rect2(-radius*1.10,-radius*1.43,radius*2.2,radius*2.47),Color.WHITE.lerp(Color("#ffd1c0"),hurt*0.22+flash*0.3))
+		Art.face(self,radius,true,gaze,hurt,clock)
+		draw_set_transform(Vector2.ZERO)
+		return
 	draw_circle(Vector2(4, 5), radius * 1.06, Color(0, 0, 0, 0.20))
 	draw_circle(Vector2.ZERO, radius + 2.0, Color("#34532c"))
 	draw_circle(Vector2.ZERO, radius, Color("#4f8f35").lerp(Color("#9be45f"), 1.0 - hurt * 0.45))
@@ -63,6 +83,8 @@ func _draw() -> void:
 
 func take_blast(damage: float) -> void:
 	if spent: return
+	flash = 1
+	recoil = 0.3
 	health -= damage
 	damaged.emit(global_position, damage)
 	if health <= 0:

@@ -2,6 +2,9 @@ extends RigidBody2D
 
 signal strong_impact(at_position: Vector2, force: float, bird_type: String)
 
+const Art := preload("res://scripts/PaintedArt.gd")
+var illustrated := false
+
 var bird_type := "bird_s"
 var radius := 18.0
 var game_state := "queue"
@@ -13,6 +16,7 @@ var launch_time := 0.0
 var is_bonus := false
 
 func setup(p_type: String, p_radius: float) -> void:
+	if illustrated: material = Art.hit_material()
 	bird_type = p_type
 	radius = p_radius
 	mass = {"bird_s": 1.1, "bird_m": 1.6, "bird_l": 2.3}.get(bird_type, 1.0)
@@ -32,6 +36,7 @@ func setup(p_type: String, p_radius: float) -> void:
 		continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
 
 func _physics_process(delta: float) -> void:
+	if illustrated: material.set_shader_parameter("hit_flash", maxf(0,1.0-squash_time/0.14) if squash > 0 else 0.0)
 	life_time += delta
 	if squash > 0.0:
 		squash_time += delta
@@ -55,6 +60,11 @@ func _draw() -> void:
 	var sx: float = 1.0 + squash * (0.65 * pulse + 0.12 * wobble)
 	var sy: float = max(0.70, 1.0 - squash * (0.50 * pulse + 0.08 * wobble))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2(sx, sy))
+	if illustrated:
+		Art.paint_bird(self,bird_type,Rect2(-radius*1.35,-radius*1.5,radius*2.7,radius*2.5),Color(1,1,1).lerp(Color("#ffdd9b"),pulse*squash))
+		Art.face(self,radius,false,Vector2(0.8,0),squash,life_time)
+		draw_set_transform(Vector2.ZERO)
+		return
 	var body_color := Color("#f13434")
 	var shade := Color("#9e1212")
 	var belly := Color("#ffe9cf")

@@ -2,6 +2,13 @@ extends RigidBody2D
 
 signal damaged(at_position: Vector2, material_type: String, force: float)
 signal destroyed(block: Node, material_type: String, at_position: Vector2)
+signal debris(at_position: Vector2, material_type: String, force: float, direction: Vector2, inherited_velocity: Vector2)
+
+const Art := preload("res://scripts/PaintedArt.gd")
+var illustrated := false
+var wounds: Array[Vector2] = []
+var fractures: Array[Dictionary] = []
+var flash := 0.0
 
 var material_type := "wood"
 var size := Vector2(80, 20)
@@ -11,6 +18,7 @@ var chip_cooldown := 0.0
 var spent := false
 
 func setup(p_material: String, p_size: Vector2, angle_radians := 0.0) -> void:
+	if illustrated: material = Art.hit_material()
 	material_type = p_material
 	size = p_size
 	rotation = angle_radians
@@ -31,6 +39,8 @@ func setup(p_material: String, p_size: Vector2, angle_radians := 0.0) -> void:
 	body_entered.connect(_on_body_entered)
 
 func _physics_process(delta: float) -> void:
+	flash = maxf(0,flash-delta*8)
+	if illustrated: material.set_shader_parameter("hit_flash", flash)
 	chip_cooldown = max(0.0, chip_cooldown - delta)
 	queue_redraw()
 
@@ -47,24 +57,147 @@ func _on_body_entered(body: Node) -> void:
 	if body is RigidBody2D:
 		other_velocity = body.linear_velocity
 	var force := (linear_velocity - other_velocity).length() * 0.075
+	var point := to_local(body.global_position)
+	var state := PhysicsServer2D.body_get_direct_state(get_rid())
+	if state:
+		for i in state.get_contact_count():
+			if state.get_contact_collider_id(i) == body.get_instance_id():
+				point = to_local(state.get_contact_local_position(i))
+				break
 	if force > 16.0:
+		mark_hit(point,force)
 		health -= force
 		if chip_cooldown <= 0.0:
-			damaged.emit(global_position, material_type, force)
+			var at := to_global(_clamp_point(point))
+			damaged.emit(at, material_type, force)
+			debris.emit(at,material_type,force,(at-global_position).normalized(),linear_velocity)
 			chip_cooldown = 0.10
 	if health <= 0.0:
 		spent = true
 		destroyed.emit(self, material_type, global_position)
 
-func take_blast(damage: float) -> void:
+func take_blast(damage: float, source_position: Vector2 = Vector2.INF) -> void:
 	if spent: return
+	var point := Vector2.ZERO if source_position == Vector2.INF else to_local(source_position)
+	mark_hit(point,damage)
 	health -= damage
-	damaged.emit(global_position, material_type, damage)
+	var at := to_global(_clamp_point(point))
+	damaged.emit(at, material_type, damage)
+	debris.emit(at,material_type,damage,(at-global_position).normalized(),linear_velocity)
 	if health <= 0:
 		spent = true
 		destroyed.emit(self, material_type, global_position)
 
+func _clamp_point(point: Vector2) -> Vector2:
+	return Vector2(clampf(point.x,-size.x*0.48,size.x*0.48),clampf(point.y,-size.y*0.48,size.y*0.48))
+
+func mark_hit(point: Vector2, strength := 25.0) -> void:
+	flash = 1.0
+	point = _clamp_point(point)
+	if illustrated: material.set_shader_parameter("impact_position",point)
+	if wounds.size() >= 7: return
+	wounds.append(point)
+	if not illustrated: return
+	var severity := clampf(strength/max_health,0.15,1.0)
+	if material_type == "wood":
+		_make_wood_fracture(point, severity)
+	else:
+		_make_glass_fracture(point, severity)
+
+# Wood fails along the grain: one main split running from the dent toward the
+# longer side (stair-stepped by alternating fiber runs and cross-grain jogs),
+# a shorter counter-split, cross-grain checks around the crushed impact zone,
+# and thin whiskers peeling off the main split. Cracks stay localized so
+# repeated hits read as growing damage instead of full-length scratches.
+func _make_wood_fracture(point: Vector2, severity: float) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(size.x*37+size.y*71+point.x*191+point.y*139)+wounds.size()*997
+	var horizontal := size.x >= size.y
+	var length := maxf(size.x,size.y)
+	var width := minf(size.x,size.y)
+	var origin := point if horizontal else Vector2(point.y,-point.x)
+	var bounds := Rect2(-Vector2(length,width)*0.48,Vector2(length,width)*0.96)
+	var cracks: Array = []
+	var dir := -signf(origin.x)
+	if absf(origin.x) < length*0.05:
+		dir = 1.0 if rng.randf() < 0.5 else -1.0
+	var main_len := clampf(length*(0.16+0.42*severity),12.0,length*0.62)
+	var main := _stair_crack(rng,origin,dir,main_len,bounds,1.7+2.3*severity,"main")
+	_store_crack(cracks,main)
+	_store_crack(cracks,_stair_crack(rng,origin,-dir,main_len*rng.randf_range(0.25,0.45),bounds,1.2+1.4*severity,"main"))
+	var check_count := 1 + (1 if severity > 0.45 else 0)
+	for c in check_count:
+		var start := (origin+Vector2(rng.randf_range(-4.0,4.0)*dir,rng.randf_range(-3.0,3.0))).clamp(bounds.position,bounds.end)
+		var heading := Vector2(0,1.0 if rng.randf() < 0.5 else -1.0).rotated(rng.randf_range(-0.3,0.3))
+		var pts := PackedVector2Array([start])
+		var cursor := start
+		for j in 3:
+			cursor += heading*rng.randf_range(1.5,3.5)+Vector2(rng.randf_range(-1.0,1.0),0)
+			cursor = cursor.clamp(bounds.position,bounds.end)
+			pts.append(cursor)
+		_store_crack(cracks,{"points":pts,"w0":0.9+0.7*severity,"w1":0.35,"kind":"check"})
+	var joints: PackedVector2Array = main["points"]
+	var whiskers := 2 + (1 if severity > 0.6 else 0)
+	for w in whiskers:
+		if joints.size() < 3: break
+		var base := joints[rng.randi_range(1,joints.size()-2)]
+		var wdir := (Vector2(-dir,0)+Vector2(0,1.0 if rng.randf() < 0.5 else -1.0)).normalized()
+		var wpts := PackedVector2Array([base])
+		var wc := base
+		for j in 3:
+			wc += wdir*rng.randf_range(1.2,2.6)+Vector2(rng.randf_range(-0.6,0.6),rng.randf_range(-0.6,0.6))
+			wc = wc.clamp(bounds.position,bounds.end)
+			wpts.append(wc)
+		_store_crack(cracks,{"points":wpts,"w0":0.8,"w1":0.3,"kind":"whisker"})
+	fractures.append({"cracks":cracks,"strength":severity,"origin":origin,"bruise":Vector2(5.0+7.0*severity,2.6+2.6*severity)})
+
+# The ribbon fill is validated once here (never per-frame): hairpin miters in
+# extreme clamped cases fall back to layered strokes, which always render.
+func _store_crack(cracks: Array, crack: Dictionary) -> void:
+	var pts: PackedVector2Array = crack["points"]
+	crack["solid"] = pts.size() >= 2 and not Geometry2D.triangulate_polygon(_ribbon(pts,float(crack["w0"]),float(crack["w1"]))).is_empty()
+	cracks.append(crack)
+
+# One stair-stepped run along the grain: mostly fiber-direction steps with an
+# occasional cross-grain jog where the split jumps to the next fiber bundle.
+func _stair_crack(rng: RandomNumberGenerator, start: Vector2, dir: float, total_len: float, bounds: Rect2, w0: float, kind: String) -> Dictionary:
+	var steps := clampi(int(total_len/5.0),3,9)
+	var pts := PackedVector2Array([start])
+	var cursor := start
+	for i in steps:
+		cursor += Vector2(dir*rng.randf_range(2.5,6.5),rng.randf_range(-1.3,1.3))
+		if rng.randf() < 0.24:
+			cursor.y += signf(rng.randf_range(-1.0,1.0))*rng.randf_range(2.0,4.5)
+		cursor = cursor.clamp(bounds.position,bounds.end)
+		pts.append(cursor)
+	return {"points":pts,"w0":w0,"w1":0.45,"kind":kind}
+
+func _make_glass_fracture(point: Vector2, severity: float) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(size.x*37+size.y*71+point.x*191+point.y*139)+wounds.size()*997+41
+	var horizontal := size.x >= size.y
+	var length := maxf(size.x,size.y)
+	var width := minf(size.x,size.y)
+	var origin := point if horizontal else Vector2(point.y,-point.x)
+	var bounds := Rect2(-Vector2(length,width)*0.48,Vector2(length,width)*0.96)
+	var cracks: Array = []
+	# Glass radiates fine, asymmetric fractures from the contact point.
+	for ray in 6:
+		var angle := float(ray)*TAU/6+rng.randf_range(-0.35,0.35)
+		var path := PackedVector2Array([origin])
+		var cursor := origin
+		for j in 5:
+			cursor += Vector2.from_angle(angle+rng.randf_range(-0.25,0.25))*rng.randf_range(3,9)
+			cursor = cursor.clamp(bounds.position,bounds.end)
+			path.append(cursor)
+		cracks.append({"points":path,"w0":1.1,"w1":0.35,"kind":"ray"})
+		cracks.append({"points":PackedVector2Array([path[2],(path[2]+Vector2.from_angle(angle+0.7)*8).clamp(bounds.position,bounds.end)]),"w0":0.7,"w1":0.3,"kind":"ray"})
+	fractures.append({"cracks":cracks,"strength":severity,"origin":origin,"bruise":Vector2(3.0,2.2)})
+
 func _draw() -> void:
+	if illustrated and material_type in ["wood","glass"]:
+		_draw_painted()
+		return
 	var rect := Rect2(-size * 0.5, size)
 	var ratio := clampf(health / max_health, 0, 1)
 	var base: Color = {"wood":Color("#c78b48"), "stone":Color("#8996a3"), "glass":Color("#91def0", 0.68)}[material_type]
@@ -106,3 +239,91 @@ func _draw() -> void:
 	if ratio < 0.7:
 		var points := PackedVector2Array([Vector2(-size.x*0.35,-size.y*0.35),Vector2(-size.x*0.08,size.y*0.1),Vector2(size.x*0.12,-size.y*0.1),Vector2(size.x*0.3,size.y*0.38)])
 		draw_polyline(points,edge,1.8,true)
+
+# Tapered ribbon around a crack centerline: wide at the impact end, hairline
+# at the tip. Gives splits a torn interior instead of a uniform scratch.
+func _ribbon(points: PackedVector2Array, w0: float, w1: float) -> PackedVector2Array:
+	var clean := PackedVector2Array()
+	for p in points:
+		if clean.is_empty() or clean[clean.size()-1].distance_to(p) > 0.5:
+			clean.append(p)
+	points = clean
+	var n := points.size()
+	if n < 2: return PackedVector2Array()
+	var total := 0.0
+	var cum: Array[float] = [0.0]
+	for i in range(1,n):
+		total += points[i].distance_to(points[i-1])
+		cum.append(total)
+	var left := PackedVector2Array()
+	var right := PackedVector2Array()
+	for i in n:
+		var d := points[mini(i+1,n-1)] - points[maxi(i-1,0)]
+		if d.length() < 0.001: d = Vector2.RIGHT
+		var normal := Vector2(-d.y,d.x).normalized()
+		var w := lerpf(w0,w1,cum[i]/maxf(total,0.001))*0.5
+		left.append(points[i]+normal*w)
+		right.append(points[i]-normal*w)
+	var poly := PackedVector2Array()
+	poly.append_array(left)
+	for i in range(n-1,-1,-1): poly.append(right[i])
+	return poly
+
+func _draw_bruise(center: Vector2, radii: Vector2, outer: Color, core: Color) -> void:
+	var poly := PackedVector2Array()
+	for i in 12:
+		var a := TAU*float(i)/12.0
+		poly.append(center+Vector2(cos(a)*radii.x,sin(a)*radii.y))
+	draw_colored_polygon(poly,outer)
+	var inner := PackedVector2Array()
+	for p in poly: inner.append(center+(p-center)*0.55)
+	draw_colored_polygon(inner,core)
+
+func _draw_wood_crack(crack: Dictionary) -> void:
+	var pts: PackedVector2Array = crack["points"]
+	if pts.size() < 2: return
+	var w0 := float(crack["w0"])
+	if bool(crack.get("solid",false)):
+		draw_colored_polygon(_ribbon(pts,w0,float(crack["w1"])),Color(0.15,0.065,0.02,0.92))
+	else:
+		draw_polyline(pts,Color(0.15,0.065,0.02,0.9),w0,true)
+	draw_polyline(pts,Color(0.08,0.03,0.01,0.95),maxf(0.8,w0*0.35),true)
+	# Torn fibers catch the light along the upper lip of the split.
+	var lip := PackedVector2Array()
+	for p in pts: lip.append(p+Vector2(0,w0*0.28+0.5))
+	draw_polyline(lip,Color(0.97,0.74,0.42,0.5),0.7,true)
+	# Short fiber-break ticks across the main split sell the tear.
+	if String(crack["kind"]) == "main":
+		var side := 1.0
+		for i in range(1,pts.size()-1):
+			if i % 2 == 0:
+				var d := pts[mini(i+1,pts.size()-1)]-pts[i-1]
+				if d.length() < 0.01: continue
+				var nrm := Vector2(-d.y,d.x).normalized()*side
+				draw_line(pts[i],pts[i]+nrm*(2.0 if side > 0.0 else 2.6),Color(0.97,0.76,0.45,0.45),0.8,true)
+				side = -side
+
+func _draw_glass_crack(crack: Dictionary) -> void:
+	# Fine radiating lines: lines cannot fail triangulation no matter how the
+	# ray bounces along the beam bounds.
+	var pts: PackedVector2Array = crack["points"]
+	if pts.size() < 2: return
+	draw_polyline(pts,Color(0.12,0.43,0.53,0.55),1.45,true)
+	draw_polyline(pts,Color(0.91,1,1,0.88),0.65,true)
+
+func _draw_painted() -> void:
+	var horizontal := size.x >= size.y
+	var length := maxf(size.x,size.y)
+	var width := minf(size.x,size.y)
+	if not horizontal: draw_set_transform(Vector2.ZERO,PI/2)
+	Art.paint(self,material_type,Rect2(-length*0.5,-width*0.5,length,width),Color.WHITE.lerp(Color("#ffe9bf"),flash*0.6))
+	for fracture in fractures:
+		if material_type == "wood":
+			_draw_bruise(fracture["origin"],fracture["bruise"],Color(0.23,0.11,0.04,0.32),Color(0.13,0.055,0.02,0.5))
+			for crack in fracture["cracks"]:
+				_draw_wood_crack(crack)
+		else:
+			_draw_bruise(fracture["origin"],fracture["bruise"],Color(0.75,0.95,1.0,0.30),Color(1,1,1,0.5))
+			for crack in fracture["cracks"]:
+				_draw_glass_crack(crack)
+	draw_set_transform(Vector2.ZERO)
