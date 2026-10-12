@@ -6,6 +6,16 @@ const PigScene := preload("res://scripts/Pig.gd")
 const ParticleLayer := preload("res://scripts/ParticleLayer.gd")
 const ChickenScene := preload("res://scripts/Chicken.gd")
 
+const SpecialProp := preload("res://scripts/SpecialProp.gd")
+const GameAudio := preload("res://scripts/GameAudio.gd")
+var audio: GameAudio
+var props: Array = []
+var shake := 0.0
+var sound_slider: HSlider
+var sound_button: Button
+var menu_panel: PanelContainer
+var volume_label: Label
+
 const VIEW := Vector2(1280, 720)
 const SLING := Vector2(250, 570)
 const MAX_DRAG := 100.0
@@ -48,8 +58,79 @@ func _ready() -> void:
 	_load_assets()
 	_build_levels()
 	_build_scene()
+	_build_audio_controls()
 	_make_butterflies()
 	set_process_input(true)
+
+func _build_audio_controls() -> void:
+	audio = GameAudio.new()
+	add_child(audio)
+	menu_panel = PanelContainer.new()
+	menu_panel.visible = false
+	menu_panel.custom_minimum_size = Vector2(320, 190)
+	var background := StyleBoxFlat.new()
+	background.bg_color = Color("#263e46")
+	background.set_corner_radius_all(16)
+	background.set_content_margin_all(20)
+	background.shadow_color = Color(0, 0, 0, 0.3)
+	background.shadow_size = 8
+	menu_panel.add_theme_stylebox_override("panel", background)
+	ui.add_child(menu_panel)
+	var panel := VBoxContainer.new()
+	panel.add_theme_constant_override("separation", 12)
+	menu_panel.add_child(panel)
+	var title := Label.new()
+	title.text = "MENU"
+	title.add_theme_font_size_override("font_size", 24)
+	panel.add_child(title)
+	sound_button = Button.new()
+	sound_button.text = "SOUND ON"
+	sound_button.custom_minimum_size = Vector2(112, 34)
+	for state in ["normal","hover","pressed"]:
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#344b51") if state == "normal" else Color("#50747a")
+		style.set_corner_radius_all(9)
+		style.set_content_margin_all(8)
+		sound_button.add_theme_stylebox_override(state, style)
+	panel.add_child(sound_button)
+	sound_button.pressed.connect(func():
+		audio.muted = not audio.muted
+		sound_button.text = "SOUND OFF" if audio.muted else "SOUND ON"
+		audio.play("click",0.5)
+		for voice in audio.voices:
+			if audio.muted: voice.stop()
+	)
+	volume_label = Label.new()
+	volume_label.text = "Sound volume: 65%"
+	panel.add_child(volume_label)
+	sound_slider = HSlider.new()
+	sound_slider.min_value = 0
+	sound_slider.max_value = 100
+	sound_slider.value = 65
+	sound_slider.custom_minimum_size = Vector2(280, 34)
+	sound_slider.tooltip_text = "Sound volume"
+	panel.add_child(sound_slider)
+	sound_slider.value_changed.connect(func(value: float):
+		audio.volume = value / 100.0
+		volume_label.text = "Sound volume: %d%%" % int(value)
+	)
+	var close_button := Button.new()
+	close_button.text = "CLOSE"
+	close_button.custom_minimum_size.y = 34
+	panel.add_child(close_button)
+	close_button.pressed.connect(func(): menu_panel.hide())
+	get_viewport().size_changed.connect(_layout_menu)
+	_layout_menu()
+
+func _layout_menu() -> void:
+	menu_panel.position = Vector2(get_viewport_rect().size.x - 350, 82)
+
+func _toggle_menu() -> void:
+	menu_panel.visible = not menu_panel.visible
+	audio.play("click", 0.5)
+	if is_dragging and is_instance_valid(drag_bird):
+		is_dragging = false
+		drag_bird.position = SLING
 
 func _load_assets() -> void:
 	background_texture = _load_texture("res://assets/ABBackgroundWide.png")
@@ -76,6 +157,7 @@ func _build_scene() -> void:
 	camera.position_smoothing_speed = 5.0
 	add_child(camera)
 	fx = ParticleLayer.new()
+	fx.z_index = 10
 	world_root.add_child(fx)
 	ui_layer = CanvasLayer.new()
 	add_child(ui_layer)
@@ -205,8 +287,21 @@ func _build_levels() -> void:
 		]}
 	]
 
+	# Optional tactical targets; the pigs remain the level objective.
+	levels[0]["props"] = [{"x":1040,"y":656,"type":"crate"}]
+	levels[1]["props"] = [{"x":1000,"y":656,"type":"crate"},{"x":1000,"y":610,"type":"crate"}]
+	levels[2].blocks.append({"x":790,"y":610,"w":18,"h":140,"type":"wood"})
+	levels[2].blocks.append({"x":798,"y":531,"w":125,"h":18,"type":"wood","angle":0.0})
+	levels[2]["props"] = [{"x":782,"y":488,"type":"boulder"},{"x":1160,"y":656,"type":"crate"}]
+	levels[3].blocks.append({"x":840,"y":620,"w":20,"h":120,"type":"wood"})
+	levels[3].blocks.append({"x":840,"y":551,"w":110,"h":18,"type":"wood"})
+	levels[3]["props"] = [{"x":840,"y":508,"type":"boulder"},{"x":1088,"y":656,"type":"crate"}]
+	levels[4]["props"] = [{"x":880,"y":656,"type":"crate"},{"x":1120,"y":656,"type":"crate"},{"x":890,"y":460,"type":"boulder"}]
+
 func _process(delta: float) -> void:
+	shake = maxf(0.0, shake - delta * 22.0)
 	_update_camera(delta)
+	camera.offset = Vector2(sin(Time.get_ticks_msec()*0.063),cos(Time.get_ticks_msec()*0.079))*shake
 	_update_butterflies(delta)
 	_update_chickens(delta)
 	if focus_timer > 0:
@@ -223,14 +318,20 @@ func _process(delta: float) -> void:
 	ui.queue_redraw()
 
 func load_level(idx: int) -> void:
+	menu_panel.hide()
 	for child in world_root.get_children():
 		child.queue_free()
 	fx = ParticleLayer.new()
+	fx.z_index = 10
 	world_root.add_child(fx)
 	birds.clear()
 	pigs.clear()
 	blocks.clear()
 	chickens.clear()
+	props.clear()
+	shake = 0
+	focus_target = null
+	focus_timer = 0
 	active_bird = null
 	drag_bird = null
 	is_dragging = false
@@ -256,6 +357,14 @@ func load_level(idx: int) -> void:
 		pig.popped.connect(_on_pig_popped)
 		world_root.add_child(pig)
 		pigs.append(pig)
+	for spec in data.get("props", []):
+		var prop := SpecialProp.new()
+		prop.position = Vector2(spec.x, spec.y)
+		prop.setup(spec.type)
+		prop.exploded.connect(_on_exploded)
+		prop.struck.connect(_on_boulder_hit)
+		world_root.add_child(prop)
+		props.append(prop)
 	for type in data.birds:
 		birds.append({"type": type, "state": "queue", "node": null})
 	game_state = "PLAYING"
@@ -299,7 +408,7 @@ func _load_next_bird() -> void:
 			drag_bird = node
 			return
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var m := get_global_mouse_position()
 		var screen_m := get_viewport().get_mouse_position()
@@ -328,8 +437,15 @@ func _input(event: InputEvent) -> void:
 		drag_bird.linear_velocity = Vector2.ZERO
 
 func _handle_press(world_m: Vector2, screen_m: Vector2) -> void:
+	if _get_ui_rect("menu").has_point(screen_m):
+		_toggle_menu()
+		return
+	if menu_panel.visible:
+		menu_panel.hide()
+		return
 	if game_state == "START":
 		if _get_ui_rect("play").has_point(screen_m):
+			audio.play("click",0.5)
 			load_level(0)
 		return
 	if game_state in ["WIN", "LOSE"]:
@@ -342,11 +458,9 @@ func _handle_press(world_m: Vector2, screen_m: Vector2) -> void:
 				load_level(current_level)
 		return
 	if game_state.begins_with("WAITING") or game_state == "PLAYING":
-		if _get_ui_rect("reset").has_point(screen_m):
-			load_level(current_level)
-			return
 		if drag_bird and world_m.distance_to(drag_bird.position) < drag_bird.radius * 2.6:
 			is_dragging = true
+			audio.play("stretch",0.6)
 
 func _handle_release() -> void:
 	if not is_dragging or not drag_bird:
@@ -359,6 +473,7 @@ func _handle_release() -> void:
 		active_bird.freeze = false
 		active_bird.game_state = "flying"
 		active_bird.launch_time = Time.get_ticks_msec() / 1000.0
+		audio.play("launch", d.length()/MAX_DRAG)
 		active_bird.linear_velocity = d * launch_power
 		active_bird.angular_velocity = sign(d.x) * 2.5
 	else:
@@ -433,6 +548,7 @@ func _check_win_lose() -> void:
 		await get_tree().create_timer(1.0).timeout
 		if game_state == "WAITING_WIN":
 			game_state = "WIN"
+			audio.play("win")
 			score += _queued_bird_count() * 10000
 			fx.confetti(Rect2(camera.position.x - 500, 30, 1000, 80))
 	elif _live_bird_count() == 0:
@@ -477,12 +593,18 @@ func _any_chicken_falling() -> bool:
 
 func _on_block_damaged(pos: Vector2, type: String, force: float) -> void:
 	var palette: Array = {"glass":[Color("#bdf0ff"), Color.WHITE, Color("#76ceff")], "stone":[Color("#858982"), Color("#c6c4b7"), Color("#555a55")], "wood":[Color("#a6642d"), Color("#db9a4c"), Color("#743e18")]}.get(type)
-	fx.burst(pos, palette, clampi(int(force / 2.0), 5, 18), 0.65, "chip")
+	fx.burst(pos, palette, clampi(int(force / 2.0), 5, 18), 0.65, type)
+	if force > 25:
+		fx.burst(pos,[Color(0.72,0.65,0.52,0.22)],5,0.25,"dust")
+	audio.play(type, force/55.0)
 
 func _on_block_destroyed(block: Node, type: String, pos: Vector2) -> void:
 	if blocks.has(block):
 		blocks.erase(block)
 	score += 700
+	fx.score_popup(pos, "+700")
+	fx.impact(pos, 25)
+	shake = maxf(shake, 2)
 	_on_block_damaged(pos, type, 45.0)
 	block.queue_free()
 
@@ -493,6 +615,9 @@ func _on_pig_popped(pig: Node, pos: Vector2) -> void:
 	if pigs.has(pig):
 		pigs.erase(pig)
 	score += 5000
+	fx.score_popup(pos, "+5000")
+	audio.play("pig")
+	fx.impact(pos, 35)
 	fx.burst(pos, [Color("#9be45f"), Color("#ffffff"), Color("#76f06d")], 36, 1.2, "spark")
 	pig.queue_free()
 
@@ -550,6 +675,7 @@ func _spawn_chicken() -> void:
 	chickens.append(chicken)
 
 func _on_chicken_shot(chicken: Node, bird: Node) -> void:
+	audio.play("chicken")
 	focus_target = chicken
 	focus_timer = 0.0
 	# Bird disappears with splash
@@ -568,6 +694,9 @@ func _on_chicken_shot(chicken: Node, bird: Node) -> void:
 	bird.queue_free()
 
 func _on_chicken_grounded(chicken: Node, bird_type: String, radius: float) -> void:
+	audio.play("boom",0.7)
+	fx.impact(chicken.global_position,60)
+	shake = maxf(shake,4)
 	focus_pos = chicken.global_position
 	focus_timer = 2.0 # Stay on explosion for 2 seconds
 	if focus_target == chicken:
@@ -597,6 +726,9 @@ func _on_chicken_grounded(chicken: Node, bird_type: String, radius: float) -> vo
 		game_state = "PLAYING"
 
 func _on_bird_impact(pos: Vector2, force: float, type: String) -> void:
+	fx.impact(pos, force)
+	shake = maxf(shake, minf(force/12, 5))
+	audio.play("stone", force/80.0)
 	# Reduce particle count if there are already many particles
 	var count := clampi(int(force / 3.0), 3, 12)
 	if fx.particles.size() > 400:
@@ -604,6 +736,38 @@ func _on_bird_impact(pos: Vector2, force: float, type: String) -> void:
 	
 	var palette: Array = {"bird_s":[Color("#ff3a3a"), Color("#ffac8c"), Color("#ffebd2")], "bird_m":[Color("#ffe845"), Color("#ffb226"), Color("#fff8b2")], "bird_l":[Color("#aa1010"), Color("#ff785a"), Color("#5a0c0c")]}.get(type)
 	fx.burst(pos, palette, count, 0.7, "spark")
+
+func _on_boulder_hit(pos: Vector2, force: float) -> void:
+	audio.play("stone",force/60.0)
+	fx.impact(pos,force)
+	fx.burst(pos,[Color("#acb5bb"),Color("#657582")],8,0.55,"stone")
+	shake = maxf(shake,minf(5,force/10))
+
+func _on_exploded(prop: Node, pos: Vector2) -> void:
+	# Defer physics mutations and chain detonations out of collision callbacks.
+	_resolve_explosion.call_deferred(prop, pos)
+
+func _resolve_explosion(prop: Node, pos: Vector2) -> void:
+	if not is_instance_valid(prop) or not props.has(prop): return
+	props.erase(prop)
+	prop.queue_free()
+	score += 1000
+	fx.score_popup(pos,"+1000")
+	audio.play("boom")
+	shake = 7.0
+	fx.impact(pos,70)
+	fx.burst(pos,[Color("#ffe99a"),Color("#ffab42"),Color("#e95730")],38,1.65,"spark")
+	fx.burst(pos,[Color("#cc9854"),Color("#854a2c")],18,1.4,"wood")
+	fx.burst(pos,[Color(0.3,0.26,0.22,0.3)],16,0.6,"dust")
+	for body in blocks.duplicate() + pigs.duplicate() + props.duplicate():
+		if not is_instance_valid(body) or body.is_queued_for_deletion(): continue
+		var offset: Vector2 = body.global_position - pos
+		var distance := offset.length()
+		if distance > 210.0: continue
+		var power := 1.0-distance/210.0
+		body.apply_central_impulse((offset.normalized()+Vector2(0,-0.45))*power*950.0)
+		if body.has_method("take_blast"): body.take_blast(110.0*power)
+		elif body is SpecialProp and body.kind == "crate": body.detonate()
 
 func _draw() -> void:
 	_draw_sky()
@@ -720,13 +884,22 @@ func _draw_sling() -> void:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		draw_line(pull, front_tip + Vector2(5, 0), Color("#2b0a0a"), 6.0)
 
+	# Rounded bindings, end caps and grain keep the sling legible at game scale.
+	for tip in [rear_tip,front_tip]:
+		draw_circle(tip,7,Color("#9a6235"))
+		draw_arc(tip,4,0,TAU,14,Color("#58351f"),1.5,true)
+	for offset in [-3.0,3.0]:
+		draw_line(trunk_top+Vector2(offset,10),trunk_base+Vector2(offset+1,-8),Color(0.9,0.66,0.34,0.25),1,true)
+	for y in [37.0,41.0,45.0,49.0,53.0]:
+		draw_line(SLING+Vector2(-7,y),SLING+Vector2(7,y+1),Color("#e6c795"),2.5,true)
+
 func _draw_ui() -> void:
 	var font := ThemeDB.fallback_font
+	_draw_button(_get_ui_rect("menu"), "MENU")
 	if game_state == "START":
 		_draw_center_title(font)
 	elif game_state in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
 		_draw_text_fx(font, Vector2(30, 45), "LEVEL %d   SCORE %d" % [current_level + 1, score], HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1, 0.196, 0.196), 4.0, 4.0)
-		_draw_button(_get_ui_rect("reset"), "RESET")
 		var x := 40.0
 		for b in birds:
 			if b.state == "queue":
@@ -790,7 +963,7 @@ func _get_ui_rect(id: String) -> Rect2:
 	match id:
 		"play": return Rect2(cx - 100, 310, 200, 80)
 		"result": return Rect2(cx - 125, 410, 250, 76)
-		"reset": return Rect2(vp.x - 220, 20, 190, 48)
+		"menu": return Rect2(vp.x - 220, 20, 190, 48)
 	return Rect2()
 
 func _draw_button(rect: Rect2, text: String) -> void:

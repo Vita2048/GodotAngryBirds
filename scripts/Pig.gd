@@ -5,6 +5,7 @@ signal popped(pig: Node, at_position: Vector2)
 
 var radius := 25.0
 var health := 35.0
+var spent := false
 
 func setup(p_radius: float) -> void:
 	radius = p_radius
@@ -25,6 +26,7 @@ func _physics_process(_delta: float) -> void:
 	queue_redraw()
 
 func _on_body_entered(body: Node) -> void:
+	if spent: return
 	var other_velocity := Vector2.ZERO
 	if body is RigidBody2D:
 		other_velocity = body.linear_velocity
@@ -33,11 +35,13 @@ func _on_body_entered(body: Node) -> void:
 		health -= force
 		damaged.emit(global_position, force)
 	if health <= 0.0:
+		spent = true
 		popped.emit(self, global_position)
 
 func _draw() -> void:
-	var hurt: float = clamp(1.0 - health / 100.0, 0.0, 1.0)
+	var hurt: float = clamp(1.0 - health / 35.0, 0.0, 1.0)
 	draw_circle(Vector2(4, 5), radius * 1.06, Color(0, 0, 0, 0.20))
+	draw_circle(Vector2.ZERO, radius + 2.0, Color("#34532c"))
 	draw_circle(Vector2.ZERO, radius, Color("#4f8f35").lerp(Color("#9be45f"), 1.0 - hurt * 0.45))
 	draw_circle(Vector2(-radius * 0.55, -radius * 0.72), radius * 0.30, Color("#6dbd42"))
 	draw_circle(Vector2(radius * 0.55, -radius * 0.72), radius * 0.30, Color("#6dbd42"))
@@ -48,6 +52,19 @@ func _draw() -> void:
 	draw_circle(Vector2(radius * 0.32, -radius * 0.28), radius * 0.18, Color.WHITE)
 	draw_circle(Vector2(-radius * 0.27, -radius * 0.25), radius * 0.07, Color("#111a10"))
 	draw_circle(Vector2(radius * 0.37, -radius * 0.25), radius * 0.07, Color("#111a10"))
+	draw_arc(Vector2(-2,-2), radius*0.76, 3.6, 4.8, 20, Color(0.85,1,0.6,0.5), 3, true)
+	draw_circle(Vector2(-radius*0.55,-radius*0.72),radius*0.15,Color("#467c32"))
+	draw_circle(Vector2(radius*0.55,-radius*0.72),radius*0.15,Color("#467c32"))
+	draw_arc(Vector2(0,radius*0.3),radius*0.25,0.1,PI-0.1,16,Color("#315222"),2,true)
+	draw_circle(Vector2(-radius*0.58,radius*0.18),radius*0.12,Color(0.95,0.7,0.45,0.35))
 	if hurt > 0.15:
 		draw_line(Vector2(-radius * 0.75, -radius * 0.55), Vector2(-radius * 0.05, -radius * 0.40), Color("#27421c"), 2.5)
 		draw_line(Vector2(radius * 0.75, -radius * 0.55), Vector2(radius * 0.05, -radius * 0.40), Color("#27421c"), 2.5)
+
+func take_blast(damage: float) -> void:
+	if spent: return
+	health -= damage
+	damaged.emit(global_position, damage)
+	if health <= 0:
+		spent = true
+		popped.emit(self, global_position)

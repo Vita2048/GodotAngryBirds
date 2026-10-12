@@ -21,7 +21,7 @@ func setup(p_type: String, p_radius: float) -> void:
 	angular_damp = 0.08
 	contact_monitor = true
 	max_contacts_reported = 4 # Reduced from 8
-	continuous_cd = RigidBody2D.CCD_MODE_DISABLED # Default to disabled
+	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
 	var shape := CircleShape2D.new()
 	shape.radius = radius
 	var collision := CollisionShape2D.new()
@@ -70,6 +70,7 @@ func _draw() -> void:
 		belly = Color("#ffd6ba")
 		brow = Color("#360000")
 	draw_circle(Vector2(4, 6), radius * 1.04, Color(0, 0, 0, 0.22))
+	draw_circle(Vector2.ZERO, radius + 1.8, shade.darkened(0.35))
 	draw_circle(Vector2.ZERO, radius, shade)
 	draw_circle(Vector2(-radius * 0.20, -radius * 0.25), radius * 0.88, body_color)
 	draw_circle(Vector2(radius * 0.10, radius * 0.35), radius * 0.42, belly)
@@ -85,3 +86,11 @@ func _draw() -> void:
 	if bird_type == "bird_l":
 		draw_line(Vector2(-radius * 0.30, -radius * 1.0), Vector2(-radius * 0.12, -radius * 1.34), shade, max(3.0, radius * 0.10))
 		draw_line(Vector2(radius * 0.00, -radius * 1.02), Vector2(radius * 0.08, -radius * 1.38), shade, max(3.0, radius * 0.10))
+
+	draw_arc(Vector2(-radius*0.1,-radius*0.15),radius*0.67,3.5,4.6,20,body_color.lightened(0.4),maxf(1.5,radius*0.1),true)
+	var crest := PackedVector2Array([Vector2(-radius*0.45,-radius*0.8),Vector2(-radius*0.55,-radius*1.25),Vector2(-radius*0.1,-radius*1.08),Vector2(radius*0.15,-radius*1.3),Vector2(radius*0.25,-radius*0.8)])
+	draw_colored_polygon(crest,shade)
+	draw_polyline(crest,shade.darkened(0.3),1.5,true)
+	draw_arc(Vector2(-radius*0.58,radius*0.18),radius*0.28,-0.6,1.8,16,shade,2,true)
+	draw_circle(Vector2(-radius*0.33,-radius*0.29),radius*0.04,Color.WHITE)
+	draw_circle(Vector2(radius*0.23,-radius*0.31),radius*0.04,Color.WHITE)

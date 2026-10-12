@@ -8,6 +8,7 @@ var size := Vector2(80, 20)
 var health := 50.0
 var max_health := 50.0
 var chip_cooldown := 0.0
+var spent := false
 
 func setup(p_material: String, p_size: Vector2, angle_radians := 0.0) -> void:
 	material_type = p_material
@@ -41,6 +42,7 @@ func _calc_health() -> float:
 	return clamp(hp, round(base * 0.6), round(base * 8.0))
 
 func _on_body_entered(body: Node) -> void:
+	if spent: return
 	var other_velocity := Vector2.ZERO
 	if body is RigidBody2D:
 		other_velocity = body.linear_velocity
@@ -51,25 +53,56 @@ func _on_body_entered(body: Node) -> void:
 			damaged.emit(global_position, material_type, force)
 			chip_cooldown = 0.10
 	if health <= 0.0:
+		spent = true
+		destroyed.emit(self, material_type, global_position)
+
+func take_blast(damage: float) -> void:
+	if spent: return
+	health -= damage
+	damaged.emit(global_position, material_type, damage)
+	if health <= 0:
+		spent = true
 		destroyed.emit(self, material_type, global_position)
 
 func _draw() -> void:
 	var rect := Rect2(-size * 0.5, size)
-	var hp_ratio: float = clamp(health / max_health, 0.0, 1.0)
-	draw_rect(rect.grow(4.0), Color(0, 0, 0, 0.18), true)
+	var ratio := clampf(health / max_health, 0, 1)
+	var base: Color = {"wood":Color("#c78b48"), "stone":Color("#8996a3"), "glass":Color("#91def0", 0.68)}[material_type]
+	var edge: Color = {"wood":Color("#603820"), "stone":Color("#3f4a59"), "glass":Color("#327c99")}[material_type]
+	var box := StyleBoxFlat.new()
+	box.bg_color = base.darkened((1.0-ratio)*0.15)
+	box.border_color = edge
+	box.set_border_width_all(2)
+	box.set_corner_radius_all(3)
+	box.shadow_color = Color(0,0,0,0.18)
+	box.shadow_size = 3
+	box.shadow_offset = Vector2(2,3)
+	draw_style_box(box, rect)
+	draw_line(rect.position+Vector2(3,3), Vector2(rect.end.x-3,rect.position.y+3), base.lightened(0.45),2,true)
+	draw_line(Vector2(rect.position.x+3,rect.end.y-3),rect.end-Vector2(3,3),edge.lightened(0.1),2,true)
 	if material_type == "wood":
-		draw_rect(rect, Color("#8f5428").lerp(Color("#c7823a"), hp_ratio), true)
-		for x in range(int(-size.x / 2.0) + 6, int(size.x / 2.0), 11):
-			draw_line(Vector2(x, -size.y / 2.0 + 3), Vector2(x + sin(float(x) * 0.2) * 3.0, size.y / 2.0 - 3), Color(0.35, 0.18, 0.07, 0.42), 1.5)
+		var horizontal := size.x > size.y
+		var length := size.x if horizontal else size.y
+		var width := size.y if horizontal else size.x
+		if not horizontal: draw_set_transform(Vector2.ZERO, PI/2)
+		for i in 3:
+			var y := -width*0.5 + 5 + i*(width-10)/3.0
+			var points := PackedVector2Array()
+			for j in 9: points.append(Vector2(-length*0.5+5+j*(length-10)/8.0,y+sin(j*1.2+i)*1.2))
+			draw_polyline(points,Color(0.38,0.20,0.08,0.38),1,true)
+		draw_arc(Vector2(length*0.16,0),3,0,TAU,16,Color("#986034"),1,true)
+		for x in [-length*0.5+7,length*0.5-7]:
+			draw_circle(Vector2(x,0),2,Color("#604b3a"))
+			draw_circle(Vector2(x-0.5,-0.6),0.8,Color("#d4bd98"))
+		draw_set_transform(Vector2.ZERO)
 	elif material_type == "stone":
-		draw_rect(rect, Color("#6f736e").lerp(Color("#aaa99d"), hp_ratio), true)
-		draw_line(Vector2(-size.x * 0.42, -size.y * 0.20), Vector2(size.x * 0.35, size.y * 0.18), Color(1, 1, 1, 0.12), 2.0)
+		for i in 5:
+			var point := Vector2(sin(i*13.1)*size.x*0.36,cos(i*7.3)*size.y*0.27)
+			draw_line(point,point+Vector2(3,1),Color(0.2,0.26,0.33,0.35),1.5,true)
 	else:
-		draw_rect(rect, Color(0.55, 0.86, 1.0, 0.58), true)
-		draw_rect(rect.grow(-3.0), Color(0.9, 1.0, 1.0, 0.24), false, 2.0)
-	if hp_ratio < 0.62:
-		var cracks := int((1.0 - hp_ratio) * 7.0) + 1
-		for i in cracks:
-			var t := float(i) / float(cracks + 1)
-			draw_line(Vector2(lerp(-size.x * 0.42, size.x * 0.35, t), -size.y * 0.22), Vector2(lerp(-size.x * 0.25, size.x * 0.45, t), size.y * 0.22), Color(0.05, 0.04, 0.03, 0.28), 1.2)
-	draw_rect(rect, Color(1, 1, 1, 0.18), false, 2.0)
+		draw_line(rect.position+Vector2(5,5),Vector2(rect.position.x+5,rect.end.y-5),Color(0.9,1,1,0.8),2,true)
+		var center := Vector2.ZERO
+		draw_line(center-Vector2(size.x*0.23,size.y*0.30),center+Vector2(size.x*0.23,size.y*0.30),Color(1,1,1,0.6),3,true)
+	if ratio < 0.7:
+		var points := PackedVector2Array([Vector2(-size.x*0.35,-size.y*0.35),Vector2(-size.x*0.08,size.y*0.1),Vector2(size.x*0.12,-size.y*0.1),Vector2(size.x*0.3,size.y*0.38)])
+		draw_polyline(points,edge,1.8,true)
