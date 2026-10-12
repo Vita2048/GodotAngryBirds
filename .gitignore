@@ -5,4 +5,5 @@
 # Build artifacts
 *.apk
 *.idsig
+/build/
 
