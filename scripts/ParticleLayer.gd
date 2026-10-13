@@ -44,6 +44,9 @@ func confetti(rect: Rect2) -> void:
 			"rv": randf_range(-10.0, 10.0),
 			"kind": "confetti"
 		})
+	# Same budget as burst(): oldest particles are dropped either way.
+	if particles.size() > 500:
+		particles = particles.slice(-500)
 
 func score_popup(pos: Vector2, value: String) -> void:
 	labels.append({"p":pos,"text":value,"life":1.1})
@@ -243,6 +246,10 @@ func _launch_glass(pos: Vector2, axis: Vector2, across: Vector2, grain_angle: fl
 		spin+rng.randf_range(-3.0,6.5) if rng.randf() < 0.5 else spin+rng.randf_range(-6.5,3.0),idx)
 
 func _process(delta: float) -> void:
+	# Nothing alive and nothing drawn last frame either (any transition to
+	# empty redraws below), so skip the loops and the redraw entirely.
+	if particles.is_empty() and blasts.is_empty() and labels.is_empty() and rings.is_empty():
+		return
 	for i in range(blasts.size()-1,-1,-1):
 		blasts[i].life -= delta
 		if blasts[i].life <= 0: blasts.remove_at(i)
@@ -270,7 +277,9 @@ func _process(delta: float) -> void:
 			p.rv *= 0.55
 		p.rot += p.rv * delta * 0.5 # Slower rotation
 		p.life -= delta
-		particles[i] = p
+		# No particles[i] = p writeback: Dictionaries are shared by reference,
+		# so the mutations above already landed in the stored dict (labels,
+		# rings and blasts in this same function have always relied on that).
 		if p.life <= 0.0:
 			particles.remove_at(i)
 	queue_redraw()

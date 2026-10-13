@@ -54,8 +54,8 @@ func _physics_process(delta: float) -> void:
 		_process_shot(delta)
 	elif state == "FALLING":
 		_process_falling(delta)
-	
-	queue_redraw()
+	# No queue_redraw() here: _process() already requests one every render
+	# frame, and redraws only ever take effect on render frames.
 
 var last_flip := 1.0
 

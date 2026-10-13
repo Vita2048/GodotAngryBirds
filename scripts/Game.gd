@@ -25,6 +25,21 @@ var volume_label: Label
 var debug_level_select := false
 var debug_level_buttons: Array[Button] = []
 var touch_mode := false
+# --- Per-frame caches: values computed once, reused by _draw_* so a frame
+# issues no redundant native calls or allocations. All pixel-identical. ---
+var _tick_ms := 0
+var _btn_style: StyleBoxFlat
+var _score_outline: StyleBoxFlat
+var _card_style: StyleBoxFlat
+var _btn_metrics_size := -1
+var _btn_ascent := 0.0
+var _btn_descent := 0.0
+var _title_metrics_size := -1
+var _title_ascent := 0.0
+var _title_descent := 0.0
+var _bg_draw_w := 0.0
+var _bf_fw := 0.0
+var _bf_fh := 0.0
 
 const VIEW := Vector2(1280, 720)
 const SLING := Vector2(250, 570)
@@ -86,6 +101,7 @@ func _ready() -> void:
 	_build_levels()
 	_build_scene()
 	_build_audio_controls()
+	_build_draw_caches()
 	_make_butterflies()
 	set_process_input(true)
 
@@ -243,10 +259,51 @@ func _load_assets() -> void:
 	chicken_flying_texture = _load_texture("res://assets/ChickenFlyingL.png")
 	chicken_shot_texture = _load_texture("res://assets/ChickenShotL.png")
 	sling_texture = load("res://assets/sling-side.png") as Texture2D
+	# Cache derived draw dimensions so the per-frame draws issue no
+	# get_size() calls. Textures never change after load.
+	if background_texture:
+		_bg_draw_w = background_texture.get_size().x * (720.0 / background_texture.get_size().y)
+	if butterfly_texture:
+		_bf_fw = butterfly_texture.get_size().x / 4.0
+		_bf_fh = butterfly_texture.get_size().y / 4.0
 	# Pre-build the hue-shifted bird variants so the first yellow/big bird
 	# costs nothing at draw time.
 	PaintedArt.bird_texture("bird_m")
 	PaintedArt.bird_texture("bird_l")
+
+func _build_draw_caches() -> void:
+	# Styles used by the per-frame canvas draws: building them once removes
+	# several allocations every frame. They are only ever read by
+	# draw_style_box, so sharing one instance is safe.
+	_btn_style = StyleBoxFlat.new()
+	_btn_style.bg_color = Color("#e84a31")
+	_btn_style.set_corner_radius_all(18)
+	_btn_style.shadow_color = Color(0, 0, 0, 0.3)
+	_btn_style.shadow_size = 6
+	_btn_style.shadow_offset = Vector2(0, 4)
+	_btn_style.border_width_bottom = 4
+	_btn_style.border_color = Color("#b82e1c")
+	_btn_style.anti_aliasing = true
+	_score_outline = StyleBoxFlat.new()
+	_score_outline.bg_color = Color(1.0, 0.976, 0.910, 0.0)
+	_score_outline.set_corner_radius_all(14)
+	_score_outline.set_border_width_all(2)
+	_score_outline.border_color = Color(0.42, 0.24, 0.12, 0.60)
+	_score_outline.shadow_color = Color(0, 0, 0, 0.0)
+	_score_outline.shadow_size = 0
+	_card_style = StyleBoxFlat.new()
+	_card_style.bg_color = Color("#fff8e8")
+	_card_style.set_corner_radius_all(16)
+	_card_style.shadow_color = Color(0,0,0,0.18)
+	_card_style.shadow_size = 5
+	_card_style.shadow_offset = Vector2(0,3)
+
+func _visible_rect() -> Rect2:
+	# World-space rect actually shown on screen, grown slightly so camera
+	# shake offset can never expose an uncovered edge. Used to cull giant
+	# fill rects down to what the GPU would clip anyway: identical pixels.
+	var vs := _visible_world_size()
+	return Rect2(camera.position - vs * 0.5, vs).grow(16.0)
 
 func _load_texture(path: String) -> Texture2D:
 	var texture := load(path) as Texture2D
@@ -302,7 +359,7 @@ func _spawn_butterfly(random_x := false) -> void:
 
 func _update_butterflies(delta: float) -> void:
 	var cam_x := camera.position.x - VIEW.x * 0.5
-	var t := Time.get_ticks_msec() * 0.001
+	var t := _tick_ms * 0.001
 	for i in range(butterflies.size() - 1, -1, -1):
 		var bf := butterflies[i]
 		bf.pos.x += bf.vx * delta
@@ -321,13 +378,14 @@ func _build_levels() -> void:
 	levels = preload("res://scripts/CampaignLevels.gd").build()
 
 func _process(delta: float) -> void:
+	_tick_ms = Time.get_ticks_msec()
 	if game_state in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
 		campaign_play_time += delta
 	if game_state in ["WIN", "LOSE"]: result_elapsed += delta
 	shake = maxf(0.0, shake - delta * 22.0)
 	band_recoil = maxf(0, band_recoil - delta)
 	_update_camera(delta)
-	camera.offset = Vector2(sin(Time.get_ticks_msec()*0.063),cos(Time.get_ticks_msec()*0.079))*shake
+	camera.offset = Vector2(sin(_tick_ms*0.063),cos(_tick_ms*0.079))*shake
 	_update_butterflies(delta)
 	_update_chickens(delta)
 	if _is_painted_now():
@@ -344,8 +402,10 @@ func _process(delta: float) -> void:
 	
 	if game_state == "PLAYING" and not _is_board_active() and not drag_bird and _queued_bird_count() > 0:
 		_load_next_bird()
-	if fx.particles.size() > 600:
-		fx.particles.remove_at(0)
+	if fx.particles.size() > 620:
+		# Drop the oldest in one chunk instead of one O(n) remove_at(0)
+		# per frame. Same newest-600 policy, a fraction of the memmoves.
+		fx.particles = fx.particles.slice(-600)
 	queue_redraw()
 	ui.queue_redraw()
 
@@ -706,7 +766,7 @@ func _check_bird_stop() -> void:
 func _is_bird_stopped(node: Node) -> bool:
 	if not node or not is_instance_valid(node):
 		return true
-	var now := Time.get_ticks_msec() / 1000.0
+	var now := _tick_ms / 1000.0
 	var launch_t = node.get("launch_time") if node.has_method("get") else 0.0
 	var vel = node.linear_velocity if "linear_velocity" in node else Vector2.ZERO
 	var ang_vel = node.angular_velocity if "angular_velocity" in node else 0.0
@@ -718,14 +778,18 @@ func _is_bird_stopped(node: Node) -> bool:
 	return false
 
 func _cleanup_fallen() -> void:
-	for block in blocks.duplicate():
+	# Backward in-place removal: same removals/frees/awards as iterating a
+	# duplicate(), but without allocating two throwaway arrays every frame.
+	for i in range(blocks.size() - 1, -1, -1):
+		var block = blocks[i]
 		if not is_instance_valid(block) or block.position.y > 1050:
-			blocks.erase(block)
+			blocks.remove_at(i)
 			if is_instance_valid(block):
 				block.queue_free()
-	for pig in pigs.duplicate():
+	for i in range(pigs.size() - 1, -1, -1):
+		var pig = pigs[i]
 		if not is_instance_valid(pig) or pig.position.y > 1050:
-			pigs.erase(pig)
+			pigs.remove_at(i)
 			_award_points(PIG_POINTS)
 			if is_instance_valid(pig):
 				pig.queue_free()
@@ -1028,14 +1092,13 @@ func _draw() -> void:
 
 func _draw_sky() -> void:
 	var cam_x := camera.position.x - VIEW.x * 0.5
-	var cam_y := camera.position.y - VIEW.y * 0.5
-	draw_rect(Rect2(cam_x - 2000, cam_y - 1000, WORLD_WIDTH + 4000, 3000), SKY_COLOR, true)
+	var vis := _visible_rect()
+	# Fill only what is on screen: the old 7500x3000 rect drew (and blended,
+	# for the veil) far beyond the viewport with identical clipped output.
+	draw_rect(vis, SKY_COLOR, true)
 	if not background_texture:
 		return
-	var tex_w := background_texture.get_size().x
-	var tex_h := background_texture.get_size().y
-	var scale := 720.0 / tex_h
-	var draw_w := tex_w * scale
+	var draw_w := _bg_draw_w
 	
 	var start_x : float = floor(cam_x / draw_w) * draw_w - draw_w
 	var end_x : float = cam_x + VIEW.x + draw_w
@@ -1050,28 +1113,36 @@ func _draw_sky() -> void:
 		# Covers the whole visible area like the sky base: otherwise wide
 		# windows show an un-veiled darker strip with a hard seam where the
 		# veil starts (vertical at x=0) or ends (horizontal at y=680).
-		draw_rect(Rect2(cam_x - 2000,cam_y - 1000,WORLD_WIDTH + 4000,3000),Color(0.95,0.98,1,0.09))
+		draw_rect(vis,Color(0.95,0.98,1,0.09))
 		# Soft contact shadows ground the painted structures. Positions follow
-		# the live level layout.
-		var anchors: Array[Vector2] = []
+		# the live level layout. Integer-bucketed dict dedup replaces the old
+		# O(n^2) scan with identical merging; off-screen shadows are skipped
+		# (the GPU clipped them anyway).
+		var seen := {}
+		var left := vis.position.x - 160.0
+		var right := vis.end.x + 160.0
 		for pig in pigs:
-			if is_instance_valid(pig): anchors.append(Vector2(pig.position.x, 679))
+			if is_instance_valid(pig):
+				_draw_shadow(pig.position.x, left, right, seen)
 		for block in blocks:
-			if is_instance_valid(block): anchors.append(Vector2(block.position.x, 679))
+			if is_instance_valid(block):
+				_draw_shadow(block.position.x, left, right, seen)
 		for prop in props:
-			if is_instance_valid(prop): anchors.append(Vector2(prop.position.x, 679))
-		var seen: Array[float] = []
-		for anchor in anchors:
-			var rounded := snappedf(anchor.x, 40.0)
-			var dup := false
-			for s in seen:
-				if absf(s - rounded) < 40.0: dup = true
-			if dup: continue
-			seen.append(rounded)
-			draw_set_transform(Vector2(rounded,679),0,Vector2(1,0.12))
-			draw_circle(Vector2.ZERO,100,Color(0.15,0.21,0.13,0.22))
-			draw_set_transform(Vector2.ZERO)
+			if is_instance_valid(prop):
+				_draw_shadow(prop.position.x, left, right, seen)
 	# end painted sky extras
+
+func _draw_shadow(x: float, left: float, right: float, seen: Dictionary) -> void:
+	var key := int(round(x / 40.0))
+	if seen.has(key):
+		return
+	seen[key] = true
+	var sx := float(key) * 40.0
+	if sx < left or sx > right:
+		return
+	draw_set_transform(Vector2(sx,679),0,Vector2(1,0.12))
+	draw_circle(Vector2.ZERO,100,Color(0.15,0.21,0.13,0.22))
+	draw_set_transform(Vector2.ZERO)
 
 func _draw_sun() -> void:
 	if not sun_texture:
@@ -1079,7 +1150,7 @@ func _draw_sun() -> void:
 	var cam_x := camera.position.x - VIEW.x * 0.5
 	var cam_y := camera.position.y - VIEW.y * 0.5
 	var sun_pos := Vector2(cam_x + 1150, cam_y + 110)
-	var t := Time.get_ticks_msec() * 0.001
+	var t := _tick_ms * 0.001
 	var pulse : float = sin(t * 1.5) # Reduced speed to match 0.025 * 60 approx
 	var scale_val : float = remap(pulse, -1.0, 1.0, 0.9, 1.1)
 	
@@ -1094,16 +1165,14 @@ func _draw_sun() -> void:
 
 	var sun_rot := t * 0.5 # Slow rotation
 	draw_set_transform(sun_pos, sun_rot, Vector2.ONE * scale_val)
-	var tex_size := sun_texture.get_size()
 	draw_texture_rect(sun_texture, Rect2(-64, -64, 128, 128), false)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_butterflies() -> void:
 	if not butterfly_texture:
 		return
-	var tex_size := butterfly_texture.get_size()
-	var fw := tex_size.x / 4.0
-	var fh := tex_size.y / 4.0
+	var fw := _bf_fw
+	var fh := _bf_fh
 	
 	for bf in butterflies:
 		var row : float = floor(bf.frame / 4.0)
@@ -1237,11 +1306,13 @@ func _draw_center_title(font: Font) -> void:
 	var title_text = "ANGRY BIRDS"
 	var font_size = _fs(100)
 	var target_y = 220.0
-	
+
 	# Precise vertical centering for Godot draw_string (which uses baseline)
-	var ascent = font.get_ascent(font_size)
-	var descent = font.get_descent(font_size)
-	var title_pos = Vector2(0, target_y + (ascent - descent) * 0.5)
+	if _title_metrics_size != font_size:
+		_title_metrics_size = font_size
+		_title_ascent = font.get_ascent(font_size)
+		_title_descent = font.get_descent(font_size)
+	var title_pos = Vector2(0, target_y + (_title_ascent - _title_descent) * 0.5)
 	
 	_draw_text_fx(font, title_pos, title_text, HORIZONTAL_ALIGNMENT_CENTER, int(vp.x), font_size, Color(1, 0.196, 0.196), 10.0, 12.0)
 	var version = ProjectSettings.get_setting("application/config/version", "dev")
@@ -1275,27 +1346,14 @@ func _draw_text_fx(font: Font, pos: Vector2, text: String, align: int, width: in
 	ui.draw_string(font, pos, text, align, width, size, color)
 
 func _score_card(rect: Rect2) -> void:
-	var card := StyleBoxFlat.new()
-	card.bg_color = Color("#fff8e8")
-	card.set_corner_radius_all(16)
-	card.shadow_color = Color(0,0,0,0.18)
-	card.shadow_size = 5
-	card.shadow_offset = Vector2(0,3)
-	ui.draw_style_box(card,rect)
+	ui.draw_style_box(_card_style,rect)
 
 func _draw_score_hud(rect: Rect2, level_score: int, total_score: int) -> void:
 	var font := ThemeDB.fallback_font
 	var score_red := Color(1, 0.196, 0.196)
 	# Transparent panel: no fill, only a thin rounded outline so the sky
 	# shows through. Text keeps the LEVEL fx styling for readability.
-	var card := StyleBoxFlat.new()
-	card.bg_color = Color(1.0, 0.976, 0.910, 0.0)
-	card.set_corner_radius_all(14)
-	card.set_border_width_all(2)
-	card.border_color = Color(0.42, 0.24, 0.12, 0.60)
-	card.shadow_color = Color(0, 0, 0, 0.0)
-	card.shadow_size = 0
-	ui.draw_style_box(card, rect)
+	ui.draw_style_box(_score_outline, rect)
 	# Same font + fx styling as LEVEL (fallback font, red fill, white outline).
 	_draw_text_fx(font, rect.position + Vector2(0, 22), "SCORE", HORIZONTAL_ALIGNMENT_CENTER, int(rect.size.x), 15, score_red, 2.0, 3.0)
 	_draw_text_fx(font, rect.position + Vector2(12, 52), "Level: %d" % level_score, HORIZONTAL_ALIGNMENT_LEFT, 160, 19, score_red, 3.0, 3.0)
@@ -1356,33 +1414,26 @@ func _get_ui_rect(id: String) -> Rect2:
 	var vp := get_viewport_rect().size
 	var cx := vp.x * 0.5
 	# Larger MENU hit area on touch devices: 48px tall is hard to hit.
-	var touch := DisplayServer.is_touchscreen_available()
+	# touch_mode is cached in _ready; DisplayServer lookup per frame avoided.
 	match id:
 		"play": return Rect2(cx - 100, 310, 200, 80)
 		"result": return Rect2(cx - 125, vp.y * 0.5 + 150, 250, 64)
 		"menu":
-			if touch:
+			if touch_mode:
 				return Rect2(vp.x - 234, 12, 222, 60)
 			return Rect2(vp.x - 220, 20, 190, 48)
 	return Rect2()
 
 func _draw_button(rect: Rect2, text: String) -> void:
-	var sb = StyleBoxFlat.new()
-	sb.bg_color = Color("#e84a31")
-	sb.set_corner_radius_all(18) # Modern Android rounded corners
-	sb.shadow_color = Color(0, 0, 0, 0.3)
-	sb.shadow_size = 6
-	sb.shadow_offset = Vector2(0, 4)
-	sb.border_width_bottom = 4
-	sb.border_color = Color("#b82e1c")
-	sb.anti_aliasing = true
-	ui.draw_style_box(sb, rect)
-	
+	ui.draw_style_box(_btn_style, rect)
+
 	var font = ThemeDB.fallback_font
 	var f_size = _fs(28)
-	var ascent = font.get_ascent(f_size)
-	var descent = font.get_descent(f_size)
-	var text_y = rect.position.y + (rect.size.y - 4) * 0.5 + (ascent - descent) * 0.5
+	if _btn_metrics_size != f_size:
+		_btn_metrics_size = f_size
+		_btn_ascent = font.get_ascent(f_size)
+		_btn_descent = font.get_descent(f_size)
+	var text_y = rect.position.y + (rect.size.y - 4) * 0.5 + (_btn_ascent - _btn_descent) * 0.5
 	
 	ui.draw_string(font, Vector2(rect.position.x, text_y), text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, f_size, Color.WHITE)
 
