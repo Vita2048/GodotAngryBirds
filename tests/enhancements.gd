@@ -59,14 +59,15 @@ func _initialize() -> void:
 	# Campaign layouts no longer contain props; create the collision fixture.
 	var target = load("res://scripts/SpecialProp.gd").new()
 	target.setup("crate")
-	target.position = Vector2(1100,646)
+	# Keep this isolated collision fixture beyond the campaign structures.
+	target.position = Vector2(1800,646)
 	target.exploded.connect(scene._on_exploded)
 	scene.world_root.add_child(target)
 	scene.props.append(target)
 	await create_timer(0.8).timeout # Allow the crate's spawn protection to expire.
 	var boulder = load("res://scripts/SpecialProp.gd").new()
 	boulder.setup("boulder")
-	boulder.position = Vector2(1180,646)
+	boulder.position = Vector2(1880,646)
 	boulder.linear_velocity = Vector2(-500,0)
 	scene.world_root.add_child(boulder)
 	scene.props.append(boulder)

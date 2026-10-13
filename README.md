@@ -2,6 +2,7 @@
 ![Screenshot](assets/GameplayScreenshot.jpg)
 Play: https://vita2048.github.io/GodotAngryBirds/
 
+<<<<<<< HEAD
 Game play video: https://x.com/VacekvVita/status/2055355105428275361?s=20
 
 ## Graphics and impact update
@@ -42,3 +43,5 @@ Run `godot --path . --script res://tests/capture_materials.gd` to regenerate
 
 Run `godot --path . --script res://tests/capture_scores.gd` to regenerate the HUD,
 win, transfer, and loss score previews in `tests/score-*.jpg`.
+=======
+>>>>>>> c85cf36d0f93dc248b23e75535ed017450f7459c

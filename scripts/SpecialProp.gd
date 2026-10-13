@@ -12,6 +12,7 @@ var armed := false
 var spent := false
 var age := 0.0
 var cooldown := 0.0
+var previous_velocity := Vector2.ZERO
 
 func setup(type: String) -> void:
 	if illustrated: material = Art.hit_material()
@@ -41,6 +42,7 @@ func setup(type: String) -> void:
 	body_entered.connect(_hit)
 
 func _physics_process(delta: float) -> void:
+	previous_velocity = linear_velocity
 	age += delta
 	flash = maxf(0,flash-delta*7)
 	if illustrated: material.set_shader_parameter("hit_flash", flash)
@@ -53,6 +55,8 @@ func _hit(body: Node) -> void:
 	var other := Vector2.ZERO
 	if body is RigidBody2D: other = body.linear_velocity
 	var speed := (linear_velocity - other).length()
+	if body.get_script() == get_script():
+		speed = maxf(speed,(previous_velocity-body.previous_velocity).length())
 	if kind == "crate" and speed > 95.0:
 		detonate()
 	elif kind == "boulder" and speed > 85.0 and cooldown <= 0.0:
@@ -60,6 +64,20 @@ func _hit(body: Node) -> void:
 		if scuffs.size()<6: scuffs.append(to_local(body.global_position).limit_length(25))
 		cooldown = 0.18
 		struck.emit(global_position, speed * 0.085)
+
+func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
+	if kind != "crate" or not armed or spent: return
+	# Recover the impact after collision response, including heavy rolling rocks.
+	for i in state.get_contact_count():
+		var body := state.get_contact_collider_object(i)
+		var effective_mass := mass
+		if body is RigidBody2D and not body.freeze:
+			effective_mass = mass * body.mass / (mass + body.mass)
+		var normal := state.get_contact_local_normal(i).normalized()
+		var speed := absf(state.get_contact_impulse(i).dot(normal)) / maxf(effective_mass,0.01)
+		if speed > 95.0:
+			detonate()
+			return
 
 func detonate() -> void:
 	if spent or kind != "crate": return

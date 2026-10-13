@@ -14,6 +14,7 @@ var squash_time := 0.0
 var life_time := 0.0
 var launch_time := 0.0
 var is_bonus := false
+var previous_velocity := Vector2.ZERO
 
 func setup(p_type: String, p_radius: float) -> void:
 	if illustrated: material = Art.hit_material()
@@ -36,6 +37,7 @@ func setup(p_type: String, p_radius: float) -> void:
 		continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
 
 func _physics_process(delta: float) -> void:
+	previous_velocity = linear_velocity
 	if illustrated: material.set_shader_parameter("hit_flash", maxf(0,1.0-squash_time/0.14) if squash > 0 else 0.0)
 	life_time += delta
 	if squash > 0.0:
@@ -45,6 +47,9 @@ func _physics_process(delta: float) -> void:
 	queue_redraw()
 
 func _on_body_entered(body: Node) -> void:
+	if game_state == "flying" and body.get_meta("bolt_gate", false) and body.collision_damage_enabled:
+		var contact_speed := maxf(previous_velocity.length(), linear_velocity.length())
+		body.take_blast(body.impact_damage(contact_speed, mass), global_position)
 	var other_velocity := Vector2.ZERO
 	if body is RigidBody2D:
 		other_velocity = body.linear_velocity

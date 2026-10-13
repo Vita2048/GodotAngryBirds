@@ -11,11 +11,10 @@ const GameAudio := preload("res://scripts/GameAudio.gd")
 const PaintedArt := preload("res://scripts/PaintedArt.gd")
 var audio: GameAudio
 var props: Array = []
+var counterweight: RigidBody2D
 var shake := 0.0
 # Painted (hybrid raster + vector) presentation on every campaign level.
-# Levels use the d29cfd3 birds/pigs/blocks layouts (no crates/boulders);
-# audio, scoring and shake stay. `illustrated` on bodies and `fx.illustrated`
-# only switch the drawing style.
+# Campaign puzzle data lives in CampaignLevels.gd.
 var sling_front: Node2D
 var sling_texture: Texture2D
 var band_recoil := 0.0
@@ -71,6 +70,10 @@ var launch_power := 15.08
 var focus_target: Node2D
 var focus_pos: Vector2
 var focus_timer := 0.0
+var campaign_levels_completed := 0
+var campaign_shots := 0
+var campaign_retries := 0
+var campaign_play_time := 0.0
 
 func _ready() -> void:
 	randomize()
@@ -245,99 +248,11 @@ func _update_butterflies(delta: float) -> void:
 			_spawn_butterfly()
 
 func _build_levels() -> void:
-	levels = [
-		# Level 0
-		{"birds":["bird_s","bird_s","bird_m","bird_s","bird_m"],
-		 "pigs":[{"x":950,"y":660,"r":25}],
-		 "blocks":[
-			{"x":900,"y":630,"w":20,"h":100,"type":"wood"},
-			{"x":1000,"y":630,"w":20,"h":100,"type":"wood"},
-			{"x":950,"y":570,"w":140,"h":20,"type":"wood"}
-		]},
-		
-		# Level 1
-		{"birds":["bird_m","bird_s","bird_l","bird_m"],
-		 "pigs":[{"x":900,"y":660,"r":25},{"x":1100,"y":660,"r":25}],
-		 "blocks":[
-			{"x":850,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":950,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":900,"y":570,"w":140,"h":20,"type":"wood"},
-			{"x":900,"y":540,"w":20,"h":40,"type":"glass"},
-			{"x":1050,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":1150,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":1100,"y":570,"w":140,"h":20,"type":"wood"},
-			{"x":1100,"y":540,"w":20,"h":40,"type":"glass"}
-		]},
-		
-		# Level 2
-		{"birds":["bird_m","bird_m","bird_l","bird_s","bird_s"],
-		 "pigs":[{"x":950,"y":660,"r":25},{"x":1050,"y":660,"r":25},{"x":1000,"y":540,"r":25}],
-		 "blocks":[
-			{"x":900,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":1000,"y":630,"w":20,"h":100,"type":"wood"},
-			{"x":1100,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":1000,"y":570,"w":240,"h":20,"type":"stone"},
-			{"x":950,"y":510,"w":20,"h":100,"type":"glass"},
-			{"x":1050,"y":510,"w":20,"h":100,"type":"glass"},
-			{"x":1000,"y":450,"w":140,"h":20,"type":"wood"},
-			{"x":1000,"y":420,"w":40,"h":40,"type":"wood"}
-		]},
-		
-		# Level 3
-		{"birds":["bird_s","bird_m","bird_l","bird_l"],
-		 "pigs":[{"x":1000,"y":660,"r":25},{"x":1000,"y":480,"r":25},{"x":1000,"y":300,"r":25}],
-		 "blocks":[
-			{"x":950,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":1050,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":1000,"y":570,"w":150,"h":20,"type":"stone"},
-			{"x":970,"y":510,"w":15,"h":100,"type":"wood"},
-			{"x":1030,"y":510,"w":15,"h":100,"type":"wood"},
-			{"x":1000,"y":450,"w":100,"h":20,"type":"wood"},
-			{"x":985,"y":390,"w":10,"h":100,"type":"glass"},
-			{"x":1015,"y":390,"w":10,"h":100,"type":"glass"},
-			{"x":1000,"y":330,"w":60,"h":15,"type":"glass"}
-		]},
-		
-		# Level 4 (your thick/hard level - now correctly placed)
-		{"birds":["bird_l","bird_m","bird_m","bird_s","bird_s"],
-		 "pigs":[{"x":800,"y":660,"r":25},{"x":1200,"y":660,"r":25},{"x":1000,"y":450,"r":25},{"x":1000,"y":150,"r":25}],
-		 "blocks":[
-			# Left tower
-			{"x":740,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":860,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":800,"y":565,"w":160,"h":20,"type":"stone"},
-			
-			# Right tower
-			{"x":1140,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":1260,"y":630,"w":20,"h":100,"type":"stone"},
-			{"x":1200,"y":565,"w":160,"h":20,"type":"stone"},
-			
-			# Middle connectors
-			{"x":800,"y":510,"w":30,"h":110,"type":"wood"},
-			{"x":1200,"y":510,"w":30,"h":110,"type":"wood"},
-			{"x":1000,"y":505,"w":420,"h":20,"type":"stone"},
-			
-			# Upper level
-			{"x":950,"y":445,"w":20,"h":110,"type":"glass"},
-			{"x":1050,"y":445,"w":20,"h":110,"type":"glass"},
-			{"x":1000,"y":385,"w":170,"h":25,"type":"wood"},
-			
-			# Top structures
-			{"x":975,"y":325,"w":20,"h":110,"type":"wood"},
-			{"x":1025,"y":325,"w":20,"h":110,"type":"wood"},
-			{"x":1000,"y":265,"w":100,"h":20,"type":"stone"},
-			{"x":1000,"y":205,"w":50,"h":110,"type":"glass"}
-		]}
-	]
-
-	# Reverted to the d29cfd3 layouts: birds/pigs/blocks only, no tactical
-	# crates/boulders and no extra boulder supports. Audio, scoring, shake and
-	# the SpecialProp/explosion code paths stay so sounds and scoring behave as
-	# before; each level keeps an empty props list for safe access.
-	for level in levels:
-		level["props"] = []
+	levels = preload("res://scripts/CampaignLevels.gd").build()
 
 func _process(delta: float) -> void:
+	if game_state in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
+		campaign_play_time += delta
 	if game_state in ["WIN", "LOSE"]: result_elapsed += delta
 	shake = maxf(0.0, shake - delta * 22.0)
 	band_recoil = maxf(0, band_recoil - delta)
@@ -366,6 +281,7 @@ func _process(delta: float) -> void:
 
 func load_level(idx: int) -> void:
 	level_generation += 1
+	var generation := level_generation
 	# Only completed levels contribute to the campaign total.
 	score = level_start_score
 	attempt_score = 0
@@ -387,6 +303,7 @@ func load_level(idx: int) -> void:
 	blocks.clear()
 	chickens.clear()
 	props.clear()
+	counterweight = null
 	shake = 0
 	focus_target = null
 	focus_timer = 0
@@ -399,11 +316,34 @@ func load_level(idx: int) -> void:
 	level_start_score = score
 	_add_boundaries()
 	var data := levels[idx]
+	for terrain in data.get("terrain", []):
+		var body := preload("res://scripts/PuzzleTerrain.gd").new()
+		body.setup(terrain.points, terrain.kind)
+		world_root.add_child(body)
+	if data.has("gap"):
+		var gap: Vector2 = data.gap
+		var shadow := Polygon2D.new()
+		shadow.polygon = PackedVector2Array([Vector2(gap.x,680),Vector2(gap.y,680),Vector2(gap.y,850),Vector2(gap.x,850)])
+		shadow.color = Color("#293a42")
+		shadow.z_index = 0
+		world_root.add_child(shadow)
+	if data.has("counterweight"):
+		counterweight = preload("res://scripts/Counterweight.gd").new()
+		counterweight.position = data.counterweight
+		world_root.add_child(counterweight)
+		for body in world_root.get_children():
+			if body is StaticBody2D and body.get("kind") == "frame":
+				counterweight.add_collision_exception_with(body)
 	for b in data.blocks:
 		var block := BlockScene.new()
 		block.position = Vector2(b.x, b.y)
+		block.set_meta("puzzle_id", b.get("id", ""))
 		block.illustrated = painted
 		block.setup(b.type, Vector2(b.w, b.h), b.get("angle", 0.0))
+		if b.get("id", "") == "counterweight_release":
+			# A notched latch behind the stone guard: one accurate hit can release it.
+			block.max_health = 30.0
+			block.health = block.max_health
 		# Let authored stacks settle without interpreting overlap correction as a hit.
 		block.collision_damage_enabled = false
 		block.damaged.connect(_on_block_damaged)
@@ -411,11 +351,17 @@ func load_level(idx: int) -> void:
 		block.destroyed.connect(_on_block_destroyed)
 		world_root.add_child(block)
 		blocks.append(block)
+		if b.get("id", "") == "stopper":
+			# Bolted gate: support pressure cannot gradually destroy it.
+			# Incoming birds deliver collision damage from their contact callback.
+			block.freeze = true
+			block.set_meta("bolt_gate", true)
 	for p in data.pigs:
 		var pig := PigScene.new()
 		pig.position = Vector2(p.x, p.y)
 		pig.illustrated = painted
 		pig.setup(p.r)
+		pig.collision_damage_enabled = false
 		pig.damaged.connect(_on_pig_damaged)
 		pig.popped.connect(_on_pig_popped)
 		world_root.add_child(pig)
@@ -433,10 +379,69 @@ func load_level(idx: int) -> void:
 		birds.append({"type": type, "state": "queue", "node": null})
 	game_state = "PLAYING"
 	await get_tree().create_timer(0.35).timeout
-	_load_next_bird()
+	if generation == level_generation: _load_next_bird()
+
+func _reset_campaign_statistics() -> void:
+	campaign_levels_completed = 0
+	campaign_shots = 0
+	campaign_retries = 0
+	campaign_play_time = 0.0
+
+func _start_campaign() -> void:
+	_reset_campaign_statistics()
+	load_level(0)
+
+func _return_to_start() -> void:
+	# Recreate the empty title scene and invalidate pending level callbacks.
+	level_generation += 1
+	game_state = "START"
+	menu_panel.hide()
+	for child in world_root.get_children():
+		world_root.remove_child(child)
+		child.queue_free()
+	fx = ParticleLayer.new()
+	fx.illustrated = true
+	fx.z_index = 10
+	world_root.add_child(fx)
+	birds.clear()
+	pigs.clear()
+	blocks.clear()
+	chickens.clear()
+	props.clear()
+	counterweight = null
+	active_bird = null
+	drag_bird = null
+	is_dragging = false
+	current_level = 0
+	score = 0
+	level_start_score = 0
+	attempt_score = 0
+	result_level_score = 0
+	result_destruction_score = 0
+	result_bonus = 0
+	result_previous_total = 0
+	result_elapsed = 0.0
+	shake = 0
+	band_recoil = 0
+	focus_target = null
+	focus_pos = Vector2.ZERO
+	focus_timer = 0
+	camera.position = VIEW * 0.5
+	camera.offset = Vector2.ZERO
+	camera.reset_smoothing()
+	butterflies.clear()
+	_make_butterflies()
+	_reset_campaign_statistics()
+	queue_redraw()
+	ui.queue_redraw()
 
 func _add_boundaries() -> void:
-	_add_static_rect(Vector2(1500, 700), Vector2(6000, 40))
+	if levels[current_level].has("gap"):
+		var gap: Vector2 = levels[current_level].gap
+		_add_static_rect(Vector2((gap.x-1500)/2,700),Vector2(gap.x+1500,40))
+		_add_static_rect(Vector2((gap.y+4500)/2,700),Vector2(4500-gap.y,40))
+	else:
+		_add_static_rect(Vector2(1500, 700), Vector2(6000, 40))
 	_add_static_rect(Vector2(-500, 360), Vector2(100, 2000))
 	_add_static_rect(Vector2(_world_right_wall_x(), 360), Vector2(100, 2000))
 
@@ -512,15 +517,16 @@ func _handle_press(world_m: Vector2, screen_m: Vector2) -> void:
 	if game_state == "START":
 		if _get_ui_rect("play").has_point(screen_m):
 			audio.play("click",0.5)
-			load_level(0)
+			_start_campaign()
 		return
 	if game_state in ["WIN", "LOSE"]:
 		if _get_ui_rect("result").has_point(screen_m):
 			if game_state == "WIN" and current_level < levels.size() - 1:
 				load_level(current_level + 1)
 			elif game_state == "WIN":
-				game_state = "START"
+				_return_to_start()
 			else:
+				campaign_retries += 1
 				load_level(current_level)
 		return
 	if game_state.begins_with("WAITING") or game_state == "PLAYING":
@@ -535,10 +541,17 @@ func _handle_release() -> void:
 	var d := SLING - drag_bird.position
 	var launching := d.length() > 20.0
 	if launching:
+		campaign_shots += 1
 		for block in blocks:
 			if is_instance_valid(block): block.collision_damage_enabled = true
+		for pig in pigs:
+			if is_instance_valid(pig): pig.collision_damage_enabled = true
 		active_bird = drag_bird
 		drag_bird = null
+		for entry in birds:
+			if entry.node == active_bird:
+				entry.state = "used"
+				break
 		active_bird.freeze = false
 		active_bird.game_state = "flying"
 		active_bird.launch_time = Time.get_ticks_msec() / 1000.0
@@ -647,6 +660,7 @@ func _finish_attempt(won: bool) -> void:
 	result_bonus = 0
 	result_elapsed = 0.0
 	if won:
+		campaign_levels_completed += 1
 		var unused := 0
 		for bird in birds:
 			if bird.state in ["queue", "slingshot"]: unused += 1
@@ -711,6 +725,8 @@ func _on_block_damaged(pos: Vector2, type: String, force: float) -> void:
 
 func _on_block_destroyed(block: Node, type: String, pos: Vector2) -> void:
 	if not blocks.has(block): return
+	if block.get_meta("puzzle_id", "") == "counterweight_release" and is_instance_valid(counterweight):
+		counterweight.release.call_deferred()
 	if blocks.has(block):
 		blocks.erase(block)
 	if _is_painted_now():
@@ -1090,6 +1106,10 @@ func _draw_ui() -> void:
 		_draw_center_title(font)
 	elif game_state in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
 		_draw_text_fx(font, Vector2(30, 45), "LEVEL %d" % (current_level + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1, 0.196, 0.196), 4.0, 4.0)
+		ui.draw_string_outline(font, Vector2(30,133), levels[current_level].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 21, 5, Color("#344953"))
+		ui.draw_string(font, Vector2(30,133), levels[current_level].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 21, Color("#fff1bc"))
+		ui.draw_string_outline(font, Vector2(30,158), levels[current_level].hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, 4, Color("#344953"))
+		ui.draw_string(font, Vector2(30,158), levels[current_level].hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
 		var center_x := get_viewport_rect().size.x * 0.5
 		_draw_score_hud(Rect2(center_x - 165, 10, 330, 68), attempt_score, level_start_score)
 		var x := 40.0
@@ -1098,8 +1118,10 @@ func _draw_ui() -> void:
 				_draw_bird_icon(Vector2(x, 88), b.type)
 				x += 38
 	elif game_state == "WIN":
-		_draw_result(font, "LEVEL %d CLEARED" % (current_level + 1), "NEXT LEVEL" if current_level < levels.size() - 1 else "MAIN MENU"
-)
+		if current_level == levels.size() - 1:
+			_draw_campaign_result(font)
+		else:
+			_draw_result(font, "LEVEL %d CLEARED" % (current_level + 1), "NEXT LEVEL")
 	elif game_state == "LOSE":
 		_draw_result(font, "TRY AGAIN", "RESTART")
 
@@ -1201,6 +1223,24 @@ func _draw_result(font: Font, title: String, button: String) -> void:
 		var pos := Vector2(rect.end.x-108,top+222+progress*64)
 		ui.draw_string(font,pos,"+%d" % result_level_score,HORIZONTAL_ALIGNMENT_LEFT,-1,17,Color(0.83,0.26,0.18,sin(progress*PI)))
 	_draw_button(_get_ui_rect("result"), button)
+
+func _draw_campaign_result(font: Font) -> void:
+	var vp := get_viewport_rect().size
+	ui.draw_rect(Rect2(Vector2.ZERO, vp), Color(0.08, 0.16, 0.18, 0.45))
+	var rect := Rect2(vp.x * 0.5 - 270, vp.y * 0.5 - 250, 540, 480)
+	var top := rect.position.y
+	_score_card(rect)
+	_draw_text_fx(font, Vector2(rect.position.x, top + 50), "CONGRATULATIONS!", HORIZONTAL_ALIGNMENT_CENTER, 540, 34, Color("#d93d32"), 3, 3)
+	ui.draw_string(font, Vector2(rect.position.x, top + 82), "You completed the entire campaign!", HORIZONTAL_ALIGNMENT_CENTER, 540, 21, Color("#5b6869"))
+	_result_row(font, rect, top + 135, "Levels completed", campaign_levels_completed)
+	_result_row(font, rect, top + 175, "Birds launched", campaign_shots)
+	_result_row(font, rect, top + 215, "Retries", campaign_retries)
+	var seconds := int(campaign_play_time)
+	ui.draw_string(font, Vector2(rect.position.x + 30, top + 255), "Play time", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color("#5b6869"))
+	ui.draw_string(font, Vector2(rect.end.x - 180, top + 255), "%d:%02d" % [seconds / 60, seconds % 60], HORIZONTAL_ALIGNMENT_RIGHT, 150, 22, Color("#5b6869"))
+	ui.draw_line(Vector2(rect.position.x + 30, top + 280), Vector2(rect.end.x - 30, top + 280), Color("#ded5c2"), 1, true)
+	_result_row(font, rect, top + 325, "Total score", score, 28, true)
+	_draw_button(_get_ui_rect("result"), "OK")
 
 func _get_ui_rect(id: String) -> Rect2:
 	var vp := get_viewport_rect().size

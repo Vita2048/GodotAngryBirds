@@ -13,6 +13,8 @@ var recoil := 0.0
 var radius := 25.0
 var health := 35.0
 var spent := false
+var collision_damage_enabled := true
+var hit_cooldown := 0.0
 
 func setup(p_radius: float) -> void:
 	if illustrated: material = Art.hit_material()
@@ -28,22 +30,31 @@ func setup(p_radius: float) -> void:
 	var collision := CollisionShape2D.new()
 	collision.shape = shape
 	add_child(collision)
-	body_entered.connect(_on_body_entered)
 
 func _physics_process(_delta: float) -> void:
+	hit_cooldown = maxf(0.0, hit_cooldown - _delta)
 	clock += _delta
 	flash = maxf(0,flash-_delta*6)
 	if illustrated: material.set_shader_parameter("hit_flash", flash)
 	recoil = maxf(0,recoil-_delta*4)
 	queue_redraw()
 
-func _on_body_entered(body: Node) -> void:
-	if spent: return
-	var other_velocity := Vector2.ZERO
-	if body is RigidBody2D:
-		other_velocity = body.linear_velocity
-	var force := (linear_velocity - other_velocity).length() * 0.08
+func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
+	if spent or not collision_damage_enabled or hit_cooldown > 0.0: return
+	# Contact velocities can already be resolved when body_entered fires.
+	# Use the normal solver impulse too, so a falling roof can actually crush a pig.
+	var force := 0.0
+	for i in state.get_contact_count():
+		var body := state.get_contact_collider_object(i)
+		var effective_mass := mass
+		if body is RigidBody2D and not body.freeze:
+			effective_mass = mass * body.mass / (mass + body.mass)
+		var normal := state.get_contact_local_normal(i).normalized()
+		var relative := state.get_contact_local_velocity_at_position(i) - state.get_contact_collider_velocity_at_position(i)
+		var speed := maxf(absf(relative.dot(normal)), absf(state.get_contact_impulse(i).dot(normal)) / maxf(effective_mass, 0.01))
+		force = maxf(force, speed * 0.08 * sqrt(effective_mass))
 	if force > 16.0:
+		hit_cooldown = 0.12
 		flash = 1
 		recoil = 0.3
 		health -= force

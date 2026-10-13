@@ -17,6 +17,8 @@ var shot_bird_radius := 16.0
 var scale_val := 0.6
 var can_change_direction := true
 var was_hit_by_bonus := false
+var impact_shape: CircleShape2D
+const BirdBody := preload("res://scripts/Bird.gd")
 
 const FLY_SPEED := 120.0
 const CHANGE_TIME := 2.0
@@ -28,6 +30,7 @@ func setup(f_tex: Texture2D, s_tex: Texture2D) -> void:
 	
 	var shape := CircleShape2D.new()
 	shape.radius = 25.0
+	impact_shape = shape
 	var col := CollisionShape2D.new()
 	col.shape = shape
 	add_child(col)
@@ -44,7 +47,10 @@ func _pick_new_target_velocity() -> void:
 func _process(delta: float) -> void:
 	if state == "FLYING":
 		_process_flying(delta)
-	elif state == "SHOT":
+	queue_redraw()
+
+func _physics_process(delta: float) -> void:
+	if state == "SHOT":
 		_process_shot(delta)
 	elif state == "FALLING":
 		_process_falling(delta)
@@ -89,7 +95,7 @@ func _process_flying(delta: float) -> void:
 
 func _process_shot(delta: float) -> void:
 	velocity.y += GRAVITY * 0.8 * delta # Stronger gravity for JS feel
-	position += velocity * delta
+	if _move_until_impact(velocity * delta): return
 	
 	frame_timer += delta * 12.0
 	if frame_timer >= 1.0:
@@ -101,13 +107,46 @@ func _process_shot(delta: float) -> void:
 
 func _process_falling(delta: float) -> void:
 	velocity.y += GRAVITY * delta
-	position += velocity * delta
+	if _move_until_impact(velocity * delta): return
 	
 	if position.y >= 680: # Ground level approx
-		chicken_grounded.emit(self, shot_bird_type, shot_bird_radius)
-		queue_free()
+		_explode_into_birds()
+
+func _move_until_impact(motion: Vector2) -> bool:
+	# Sweep the chicken's full shape so even fast falls catch thin beams.
+	var query := PhysicsShapeQueryParameters2D.new()
+	query.shape = impact_shape
+	query.transform = global_transform
+	query.collision_mask = collision_mask
+	var excluded: Array[RID] = [get_rid()]
+	for body in get_parent().get_children():
+		if body is BirdBody: excluded.append(body.get_rid())
+	query.exclude = excluded
+	var space := get_world_2d().direct_space_state
+	# cast_motion ignores initial overlaps, so check those separately.
+	if not space.intersect_shape(query, 1).is_empty():
+		_explode_into_birds()
+		return true
+	query.motion = motion
+	var travel := space.cast_motion(query)
+	if travel[0] < 1.0:
+		global_position += motion * travel[0]
+		_explode_into_birds()
+		return true
+	global_position += motion
+	return false
+
+func _explode_into_birds() -> void:
+	if state != "SHOT" and state != "FALLING": return
+	# Change state before emitting: simultaneous contacts must reward only once.
+	state = "EXPLODED"
+	chicken_grounded.emit(self, shot_bird_type, shot_bird_radius)
+	queue_free()
 
 func _on_body_entered(body: Node) -> void:
+	if (state == "SHOT" or state == "FALLING") and body is PhysicsBody2D and not body is BirdBody:
+		_explode_into_birds()
+		return
 	if state == "FLYING" and body.get("game_state") == "flying":
 		# Hit by a bird
 		state = "SHOT"

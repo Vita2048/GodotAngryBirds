@@ -18,8 +18,9 @@ func _initialize() -> void:
 	check(game.attempt_score == 50, "Pig scored twice")
 	game._finish_attempt(true)
 	var bank: int = game.score
-	check(bank == 550, "Unused bird bonus excluded slingshot or counted incorrectly")
-	check(game.result_destruction_score == 50 and game.result_bonus == 500 and game.result_level_score == 550, "Win breakdown does not add up")
+	var expected_bonus: int = game.levels[0].birds.size() * game.UNUSED_BIRD_POINTS
+	check(bank == 50 + expected_bonus, "Unused bird bonus excluded slingshot or counted incorrectly")
+	check(game.result_destruction_score == 50 and game.result_bonus == expected_bonus and game.result_level_score == 50 + expected_bonus, "Win breakdown does not add up")
 	check(game._displayed_total() == 0, "Transfer did not start from previous total")
 	game.result_elapsed = 1.2
 	check(game._displayed_total() > 0 and game._displayed_total() < bank, "Transfer did not animate total")

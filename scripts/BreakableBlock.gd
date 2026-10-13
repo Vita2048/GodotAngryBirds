@@ -243,6 +243,10 @@ func _draw_stone_damage() -> void:
 func _draw() -> void:
 	if illustrated and material_type in ["wood","glass"]:
 		_draw_painted()
+		if get_meta("puzzle_id", "") in ["stopper", "counterweight_release"]:
+			# Pale cuts mark the release timber even before the first hit.
+			draw_line(Vector2(-size.x*0.5,-7),Vector2(size.x*0.15,0),Color("#ffe0a0"),3,true)
+			draw_line(Vector2(size.x*0.5,7),Vector2(-size.x*0.15,0),Color("#ffe0a0"),3,true)
 		return
 	var rect := Rect2(-size * 0.5, size)
 	var ratio := clampf(health / max_health, 0, 1)
