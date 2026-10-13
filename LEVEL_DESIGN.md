@@ -96,3 +96,20 @@ unused-bird score bonus while still airborne.
 The completion test exercises progression, a retry, final victory, confirmation,
 cleanup, delayed callbacks, and starting another campaign. Add `-- capture` when
 running with graphics to save the congratulations and returned-title previews.
+
+## Debug level selection
+
+Set Project Settings > Editor > Run > Main Run Args
+(`editor/run/main_run_args`) to `-- --debug-levels`. This is enabled in the
+project's editor run configuration. Open MENU on the title screen or during play
+to access Level 1 through the final level; labels and buttons are generated from
+the campaign data. A jump starts the selected level with a fresh score, bird
+queue, statistics, and camera. Sound settings are preserved.
+
+Clear Main Run Args to disable the selector. For a command-line run, append
+`-- --debug-levels` to the Godot command. The selector checks user arguments;
+normal launches without the flag do not create the buttons. Godot's argument
+separator is documented in the [command-line tutorial](https://docs.godotengine.org/en/stable/tutorials/editor/command_line_tutorial.html).
+
+`tests/debug_levels.gd` checks both modes. Run it once with `-- --debug-levels`
+and once without to verify level navigation, reset behavior, and stale callbacks.

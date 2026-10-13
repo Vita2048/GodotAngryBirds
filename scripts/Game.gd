@@ -22,6 +22,9 @@ var sound_slider: HSlider
 var sound_button: Button
 var menu_panel: PanelContainer
 var volume_label: Label
+var debug_level_select := false
+var debug_level_buttons: Array[Button] = []
+var touch_mode := false
 
 const VIEW := Vector2(1280, 720)
 const SLING := Vector2(250, 570)
@@ -77,12 +80,21 @@ var campaign_play_time := 0.0
 
 func _ready() -> void:
 	randomize()
+	touch_mode = DisplayServer.is_touchscreen_available()
+	debug_level_select = "--debug-levels" in OS.get_cmdline_user_args()
 	_load_assets()
 	_build_levels()
 	_build_scene()
 	_build_audio_controls()
 	_make_butterflies()
 	set_process_input(true)
+
+func _font_scale() -> float:
+	# All UI text is 25% larger on touchscreen (mobile) devices.
+	return 1.25 if touch_mode else 1.0
+
+func _fs(base: int) -> int:
+	return int(round(float(base) * _font_scale()))
 
 func _build_audio_controls() -> void:
 	audio = GameAudio.new()
@@ -103,11 +115,12 @@ func _build_audio_controls() -> void:
 	menu_panel.add_child(panel)
 	var title := Label.new()
 	title.text = "MENU"
-	title.add_theme_font_size_override("font_size", 24)
+	title.add_theme_font_size_override("font_size", _fs(24))
 	panel.add_child(title)
 	sound_button = Button.new()
 	sound_button.text = "SOUND ON"
-	sound_button.custom_minimum_size = Vector2(112, 34)
+	sound_button.custom_minimum_size = Vector2(140, 44)
+	sound_button.add_theme_font_size_override("font_size", _fs(16))
 	for state in ["normal","hover","pressed"]:
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color("#344b51") if state == "normal" else Color("#50747a")
@@ -124,28 +137,85 @@ func _build_audio_controls() -> void:
 	)
 	volume_label = Label.new()
 	volume_label.text = "Sound volume: 65%"
+	volume_label.add_theme_font_size_override("font_size", _fs(16))
 	panel.add_child(volume_label)
+	# Volume row: step buttons flank the slider. Precise slider dragging is
+	# hard with a finger, so -/+ give a guaranteed-tappable fallback that
+	# steps by 10. Both paths funnel through value_changed below.
+	var volume_row := HBoxContainer.new()
+	volume_row.add_theme_constant_override("separation", 8)
+	volume_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	panel.add_child(volume_row)
+	var vol_down := Button.new()
+	vol_down.text = "-"
+	vol_down.custom_minimum_size = Vector2(48, 44)
+	vol_down.add_theme_font_size_override("font_size", _fs(20))
+	vol_down.tooltip_text = "Volume down"
+	vol_down.focus_mode = Control.FOCUS_NONE
+	volume_row.add_child(vol_down)
 	sound_slider = HSlider.new()
 	sound_slider.min_value = 0
 	sound_slider.max_value = 100
+	sound_slider.step = 1
 	sound_slider.value = 65
-	sound_slider.custom_minimum_size = Vector2(280, 34)
+	sound_slider.custom_minimum_size = Vector2(160, 44)
+	sound_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sound_slider.tooltip_text = "Sound volume"
-	panel.add_child(sound_slider)
+	volume_row.add_child(sound_slider)
+	var vol_up := Button.new()
+	vol_up.text = "+"
+	vol_up.custom_minimum_size = Vector2(48, 44)
+	vol_up.add_theme_font_size_override("font_size", _fs(20))
+	vol_up.tooltip_text = "Volume up"
+	vol_up.focus_mode = Control.FOCUS_NONE
+	volume_row.add_child(vol_up)
+	vol_down.pressed.connect(func():
+		sound_slider.value = clampf(sound_slider.value - 10.0, 0.0, 100.0)
+		audio.play("click", 0.5)
+	)
+	vol_up.pressed.connect(func():
+		sound_slider.value = clampf(sound_slider.value + 10.0, 0.0, 100.0)
+		audio.play("click", 0.5)
+	)
 	sound_slider.value_changed.connect(func(value: float):
 		audio.volume = value / 100.0
 		volume_label.text = "Sound volume: %d%%" % int(value)
 	)
+	if debug_level_select:
+		var level_title := Label.new()
+		level_title.text = "DEBUG LEVEL SELECT"
+		level_title.add_theme_font_size_override("font_size", _fs(18))
+		panel.add_child(level_title)
+		var grid := GridContainer.new()
+		grid.columns = 3
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		panel.add_child(grid)
+		for index in levels.size():
+			var level_button := Button.new()
+			level_button.text = "Level %d" % (index + 1)
+			level_button.tooltip_text = levels[index].name
+			level_button.custom_minimum_size = Vector2(88, 36)
+			level_button.add_theme_font_size_override("font_size", _fs(12))
+			level_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			for state in ["normal", "hover", "pressed"]:
+				level_button.add_theme_stylebox_override(state, sound_button.get_theme_stylebox(state))
+			level_button.pressed.connect(_jump_to_level.bind(index))
+			grid.add_child(level_button)
+			debug_level_buttons.append(level_button)
 	var close_button := Button.new()
 	close_button.text = "CLOSE"
-	close_button.custom_minimum_size.y = 34
+	close_button.custom_minimum_size = Vector2(140, 44)
+	close_button.add_theme_font_size_override("font_size", _fs(16))
 	panel.add_child(close_button)
 	close_button.pressed.connect(func(): menu_panel.hide())
 	get_viewport().size_changed.connect(_layout_menu)
 	_layout_menu()
 
 func _layout_menu() -> void:
-	menu_panel.position = Vector2(get_viewport_rect().size.x - 350, 82)
+	var vs := get_viewport_rect().size
+	# Clamp so the panel stays on-screen on narrow/short phone screens.
+	menu_panel.position = Vector2(maxf(10.0, vs.x - 350.0), clampf(82.0, 10.0, maxf(10.0, vs.y - 210.0)))
 
 func _toggle_menu() -> void:
 	menu_panel.visible = not menu_panel.visible
@@ -391,6 +461,12 @@ func _start_campaign() -> void:
 	_reset_campaign_statistics()
 	load_level(0)
 
+func _jump_to_level(index: int) -> void:
+	if not debug_level_select or index < 0 or index >= levels.size(): return
+	audio.play("click", 0.5)
+	_return_to_start()
+	load_level(index)
+
 func _return_to_start() -> void:
 	# Recreate the empty title scene and invalidate pending level callbacks.
 	level_generation += 1
@@ -479,29 +555,46 @@ func _load_next_bird() -> void:
 			drag_bird = node
 			return
 
+func _screen_to_world(screen_pos: Vector2) -> Vector2:
+	# get_global_mouse_position() only follows the mouse. On mobile (touch)
+	# it is stale/zero unless mouse emulation is on, so convert explicitly.
+	return get_viewport().get_canvas_transform().affine_inverse() * screen_pos
+
+func _is_emulated_mouse(event: InputEvent) -> bool:
+	# With emulate_mouse_from_touch=true every touch also arrives as an
+	# InputEventMouseButton/Motion with device -1. Custom-drawn buttons must
+	# ignore those (the real ScreenTouch branch already handled them), or the
+	# menu double-toggles (open then instantly close). Native Controls keep
+	# working through the emulated events.
+	return event.device == InputEvent.DEVICE_ID_EMULATION
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		var m := get_global_mouse_position()
-		var screen_m := get_viewport().get_mouse_position()
+		if _is_emulated_mouse(event):
+			return
+		var screen_m := (event as InputEventMouseButton).position
+		var m := _screen_to_world(screen_m)
 		if event.pressed:
 			_handle_press(m, screen_m)
 		else:
 			_handle_release()
 	elif event is InputEventMouseMotion and is_dragging and drag_bird:
-		var d := get_global_mouse_position() - SLING
+		if _is_emulated_mouse(event):
+			return
+		var d := _screen_to_world((event as InputEventMouseMotion).position) - SLING
 		if d.length() > MAX_DRAG:
 			d = d.normalized() * MAX_DRAG
 		drag_bird.position = SLING + d
 		drag_bird.linear_velocity = Vector2.ZERO
 	elif event is InputEventScreenTouch:
-		var m := get_global_mouse_position()
 		var screen_m := (event as InputEventScreenTouch).position
+		var m := _screen_to_world(screen_m)
 		if event.pressed:
 			_handle_press(m, screen_m)
 		else:
 			_handle_release()
 	elif event is InputEventScreenDrag and is_dragging and drag_bird:
-		var d := get_global_mouse_position() - SLING
+		var d := _screen_to_world((event as InputEventScreenDrag).position) - SLING
 		if d.length() > MAX_DRAG:
 			d = d.normalized() * MAX_DRAG
 		drag_bird.position = SLING + d
@@ -511,13 +604,22 @@ func _handle_press(world_m: Vector2, screen_m: Vector2) -> void:
 	if _get_ui_rect("menu").has_point(screen_m):
 		_toggle_menu()
 		return
-	if menu_panel.visible:
-		menu_panel.hide()
+	if menu_panel.visible and menu_panel.get_global_rect().has_point(screen_m):
+		# Press landed on the menu panel itself (slider, buttons). The GUI
+		# owns it: never dismiss the menu or start game actions from here.
+		# This also covers the case where a real ScreenTouch reaches
+		# _unhandled_input but the matching emulated mouse event is what the
+		# Control actually consumes.
 		return
+	# PLAY / NEXT / RESTART must work even while the menu is open. Taps on
+	# the menu PanelContainer itself are consumed by the GUI and never reach
+	# here, so reaching this point with menu visible means "tap outside".
 	if game_state == "START":
 		if _get_ui_rect("play").has_point(screen_m):
 			audio.play("click",0.5)
 			_start_campaign()
+		elif menu_panel.visible:
+			menu_panel.hide()
 		return
 	if game_state in ["WIN", "LOSE"]:
 		if _get_ui_rect("result").has_point(screen_m):
@@ -528,6 +630,11 @@ func _handle_press(world_m: Vector2, screen_m: Vector2) -> void:
 			else:
 				campaign_retries += 1
 				load_level(current_level)
+		elif menu_panel.visible:
+			menu_panel.hide()
+		return
+	if menu_panel.visible:
+		menu_panel.hide()
 		return
 	if game_state.begins_with("WAITING") or game_state == "PLAYING":
 		if drag_bird and world_m.distance_to(drag_bird.position) < drag_bird.radius * 2.6:
@@ -1105,11 +1212,11 @@ func _draw_ui() -> void:
 	if game_state == "START":
 		_draw_center_title(font)
 	elif game_state in ["PLAYING", "WAITING_WIN", "WAITING_LOSE"]:
-		_draw_text_fx(font, Vector2(30, 45), "LEVEL %d" % (current_level + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1, 0.196, 0.196), 4.0, 4.0)
-		ui.draw_string_outline(font, Vector2(30,133), levels[current_level].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 21, 5, Color("#344953"))
-		ui.draw_string(font, Vector2(30,133), levels[current_level].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 21, Color("#fff1bc"))
-		ui.draw_string_outline(font, Vector2(30,158), levels[current_level].hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, 4, Color("#344953"))
-		ui.draw_string(font, Vector2(30,158), levels[current_level].hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+		_draw_text_fx(font, Vector2(30, 45), "LEVEL %d" % (current_level + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, _fs(28), Color(1, 0.196, 0.196), 4.0, 4.0)
+		ui.draw_string_outline(font, Vector2(30,133), levels[current_level].name, HORIZONTAL_ALIGNMENT_LEFT, -1, _fs(21), 5, Color("#344953"))
+		ui.draw_string(font, Vector2(30,133), levels[current_level].name, HORIZONTAL_ALIGNMENT_LEFT, -1, _fs(21), Color("#fff1bc"))
+		ui.draw_string_outline(font, Vector2(30,158), levels[current_level].hint, HORIZONTAL_ALIGNMENT_LEFT, -1, _fs(16), 4, Color("#344953"))
+		ui.draw_string(font, Vector2(30,158), levels[current_level].hint, HORIZONTAL_ALIGNMENT_LEFT, -1, _fs(16), Color.WHITE)
 		var center_x := get_viewport_rect().size.x * 0.5
 		_draw_score_hud(Rect2(center_x - 165, 10, 330, 68), attempt_score, level_start_score)
 		var x := 40.0
@@ -1128,7 +1235,7 @@ func _draw_ui() -> void:
 func _draw_center_title(font: Font) -> void:
 	var vp := get_viewport_rect().size
 	var title_text = "ANGRY BIRDS"
-	var font_size = 100
+	var font_size = _fs(100)
 	var target_y = 220.0
 	
 	# Precise vertical centering for Godot draw_string (which uses baseline)
@@ -1140,7 +1247,7 @@ func _draw_center_title(font: Font) -> void:
 	var version = ProjectSettings.get_setting("application/config/version", "dev")
 	var version_text = "Version: " + version
 	
-	var version_font_size = 18
+	var version_font_size = _fs(18)
 	var version_y_offset = 75.0                    # Distance below the title
 	
 	var version_pos = Vector2(0, target_y + version_y_offset)
@@ -1151,6 +1258,8 @@ func _draw_center_title(font: Font) -> void:
 	_draw_button(_get_ui_rect("play"), "PLAY")
 
 func _draw_text_fx(font: Font, pos: Vector2, text: String, align: int, width: int, size: int, color: Color, stroke_size: float = 4.0, shadow_blur: float = 8.0) -> void:
+	size = _fs(size)
+	stroke_size *= _font_scale()
 	# 1. Subtle Blurry Shadow (Deep back)
 	for i in range(4, 0, -1):
 		var alpha = 0.35 * (1.0 - float(i) / 4.0)
@@ -1193,8 +1302,9 @@ func _draw_score_hud(rect: Rect2, level_score: int, total_score: int) -> void:
 	_draw_text_fx(font, rect.position + Vector2(rect.size.x - 12 - 140, 52), "Total: %d" % total_score, HORIZONTAL_ALIGNMENT_RIGHT, 140, 19, score_red, 3.0, 3.0)
 
 func _result_row(font: Font, rect: Rect2, y: float, label: String, value: int, size := 21, primary := false) -> void:
-	ui.draw_string(font,Vector2(rect.position.x+30,y),label,HORIZONTAL_ALIGNMENT_LEFT,-1,size,Color("#34494d"))
-	ui.draw_string(font,Vector2(rect.position.x+270,y),str(value),HORIZONTAL_ALIGNMENT_RIGHT,int(rect.size.x-300),size+5 if primary else size,Color("#d4422e") if primary else Color("#34494d"))
+	var s := _fs(size)
+	ui.draw_string(font,Vector2(rect.position.x+30,y),label,HORIZONTAL_ALIGNMENT_LEFT,-1,s,Color("#34494d"))
+	ui.draw_string(font,Vector2(rect.position.x+270,y),str(value),HORIZONTAL_ALIGNMENT_RIGHT,int(rect.size.x-300),s+5 if primary else s,Color("#d4422e") if primary else Color("#34494d"))
 
 func _draw_result(font: Font, title: String, button: String) -> void:
 	var vp := get_viewport_rect().size
@@ -1202,18 +1312,18 @@ func _draw_result(font: Font, title: String, button: String) -> void:
 	var top := rect.position.y
 	ui.draw_rect(Rect2(Vector2.ZERO,vp),Color(0.12,0.19,0.22,0.48))
 	_score_card(rect)
-	ui.draw_string(font,Vector2(rect.position.x,top+54),title,HORIZONTAL_ALIGNMENT_CENTER,500,32,Color("#d4422e"))
+	ui.draw_string(font,Vector2(rect.position.x,top+54),title,HORIZONTAL_ALIGNMENT_CENTER,500,_fs(32),Color("#d4422e"))
 	if game_state == "WIN":
 		_result_row(font,rect,top+108,"Destruction",result_destruction_score)
 		_result_row(font,rect,top+144,"Unused birds",result_bonus)
 		ui.draw_line(Vector2(rect.position.x+30,top+164),Vector2(rect.end.x-30,top+164),Color("#ded5c2"),1,true)
 	else:
-		ui.draw_string(font,Vector2(rect.position.x,top+123),"Give it another shot!",HORIZONTAL_ALIGNMENT_CENTER,500,21,Color("#5b6869"))
+		ui.draw_string(font,Vector2(rect.position.x,top+123),"Give it another shot!",HORIZONTAL_ALIGNMENT_CENTER,500,_fs(21),Color("#5b6869"))
 	_result_row(font,rect,top+207,"Level score",result_level_score,28,true)
 	var note := "Not added to total"
 	if game_state == "WIN":
 		note = "Added to total" if result_elapsed >= 1.8 else "Adding level score..."
-	ui.draw_string(font,Vector2(rect.position.x+30,top+239),note,HORIZONTAL_ALIGNMENT_LEFT,-1,16,Color("#5b6869"))
+	ui.draw_string(font,Vector2(rect.position.x+30,top+239),note,HORIZONTAL_ALIGNMENT_LEFT,-1,_fs(16),Color("#5b6869"))
 	ui.draw_line(Vector2(rect.position.x+30,top+268),Vector2(rect.end.x-30,top+268),Color("#ded5c2"),1,true)
 	_result_row(font,rect,top+312,"Total score",_displayed_total(),26)
 	# A single points token moves from the level value into the total; the
@@ -1221,7 +1331,7 @@ func _draw_result(font: Font, title: String, button: String) -> void:
 	if game_state == "WIN" and result_elapsed > 0.65 and result_elapsed < 1.8 and result_level_score > 0:
 		var progress := _score_transfer_progress()
 		var pos := Vector2(rect.end.x-108,top+222+progress*64)
-		ui.draw_string(font,pos,"+%d" % result_level_score,HORIZONTAL_ALIGNMENT_LEFT,-1,17,Color(0.83,0.26,0.18,sin(progress*PI)))
+		ui.draw_string(font,pos,"+%d" % result_level_score,HORIZONTAL_ALIGNMENT_LEFT,-1,_fs(17),Color(0.83,0.26,0.18,sin(progress*PI)))
 	_draw_button(_get_ui_rect("result"), button)
 
 func _draw_campaign_result(font: Font) -> void:
@@ -1231,13 +1341,13 @@ func _draw_campaign_result(font: Font) -> void:
 	var top := rect.position.y
 	_score_card(rect)
 	_draw_text_fx(font, Vector2(rect.position.x, top + 50), "CONGRATULATIONS!", HORIZONTAL_ALIGNMENT_CENTER, 540, 34, Color("#d93d32"), 3, 3)
-	ui.draw_string(font, Vector2(rect.position.x, top + 82), "You completed the entire campaign!", HORIZONTAL_ALIGNMENT_CENTER, 540, 21, Color("#5b6869"))
+	ui.draw_string(font, Vector2(rect.position.x, top + 82), "You completed the entire campaign!", HORIZONTAL_ALIGNMENT_CENTER, 540, _fs(21), Color("#5b6869"))
 	_result_row(font, rect, top + 135, "Levels completed", campaign_levels_completed)
 	_result_row(font, rect, top + 175, "Birds launched", campaign_shots)
 	_result_row(font, rect, top + 215, "Retries", campaign_retries)
 	var seconds := int(campaign_play_time)
-	ui.draw_string(font, Vector2(rect.position.x + 30, top + 255), "Play time", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color("#5b6869"))
-	ui.draw_string(font, Vector2(rect.end.x - 180, top + 255), "%d:%02d" % [seconds / 60, seconds % 60], HORIZONTAL_ALIGNMENT_RIGHT, 150, 22, Color("#5b6869"))
+	ui.draw_string(font, Vector2(rect.position.x + 30, top + 255), "Play time", HORIZONTAL_ALIGNMENT_LEFT, -1, _fs(22), Color("#5b6869"))
+	ui.draw_string(font, Vector2(rect.end.x - 180, top + 255), "%d:%02d" % [seconds / 60, seconds % 60], HORIZONTAL_ALIGNMENT_RIGHT, 150, _fs(22), Color("#5b6869"))
 	ui.draw_line(Vector2(rect.position.x + 30, top + 280), Vector2(rect.end.x - 30, top + 280), Color("#ded5c2"), 1, true)
 	_result_row(font, rect, top + 325, "Total score", score, 28, true)
 	_draw_button(_get_ui_rect("result"), "OK")
@@ -1245,10 +1355,15 @@ func _draw_campaign_result(font: Font) -> void:
 func _get_ui_rect(id: String) -> Rect2:
 	var vp := get_viewport_rect().size
 	var cx := vp.x * 0.5
+	# Larger MENU hit area on touch devices: 48px tall is hard to hit.
+	var touch := DisplayServer.is_touchscreen_available()
 	match id:
 		"play": return Rect2(cx - 100, 310, 200, 80)
 		"result": return Rect2(cx - 125, vp.y * 0.5 + 150, 250, 64)
-		"menu": return Rect2(vp.x - 220, 20, 190, 48)
+		"menu":
+			if touch:
+				return Rect2(vp.x - 234, 12, 222, 60)
+			return Rect2(vp.x - 220, 20, 190, 48)
 	return Rect2()
 
 func _draw_button(rect: Rect2, text: String) -> void:
@@ -1264,7 +1379,7 @@ func _draw_button(rect: Rect2, text: String) -> void:
 	ui.draw_style_box(sb, rect)
 	
 	var font = ThemeDB.fallback_font
-	var f_size = 28
+	var f_size = _fs(28)
 	var ascent = font.get_ascent(f_size)
 	var descent = font.get_descent(f_size)
 	var text_y = rect.position.y + (rect.size.y - 4) * 0.5 + (ascent - descent) * 0.5
