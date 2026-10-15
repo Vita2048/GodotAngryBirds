@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+		<meta name="theme-color" content="#000000">
+		<title>$GODOT_PROJECT_NAME</title>
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+body {
+	color: white;
+	background-color: black;
+	overflow: hidden;
+	touch-action: none;
+}
+
+#canvas {
+	display: block;
+}
+
+#canvas:focus {
+	outline: none;
+}
+
+#status, #status-splash, #status-progress {
+	position: absolute;
+	left: 0;
+	right: 0;
+}
+
+#status, #status-splash {
+	top: 0;
+	bottom: 0;
+}
+
+#status {
+	background-color: $GODOT_SPLASH_COLOR;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	visibility: hidden;
+}
+
+#status-splash {
+	max-height: 100%;
+	max-width: 100%;
+	margin: auto;
+}
+
+#status-splash.show-image--false {
+	display: none;
+}
+
+#status-splash.fullsize--true {
+	height: 100%;
+	width: 100%;
+	object-fit: contain;
+}
+
+#status-splash.use-filter--false {
+	image-rendering: pixelated;
+}
+
+#status-progress, #status-notice {
+	display: none;
+}
+
+#status-progress {
+	bottom: 10%;
+	width: 50%;
+	margin: 0 auto;
+}
+
+#status-notice {
+	background-color: #5b3943;
+	border-radius: 0.5rem;
+	border: 1px solid #9b3943;
+	color: #e0e0e0;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	line-height: 1.3;
+	margin: 0 2rem;
+	overflow: hidden;
+	padding: 1rem;
+	text-align: center;
+	z-index: 1;
+}
+
+/* Mobile-only overlay. Desktop never gets body.mobile-device, so it is untouched. */
+#ab-mobile-fs-btn, #ab-portrait-card {
+	display: none;
+}
+
+body.mobile-device {
+	overscroll-behavior: none;
+}
+
+body.mobile-device #ab-mobile-fs-btn {
+	position: fixed;
+	right: calc(12px + env(safe-area-inset-right, 0px));
+	bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+	z-index: 10;
+	padding: 10px 14px;
+	border-radius: 12px;
+	border: 1px solid rgba(255, 255, 255, 0.35);
+	background: rgba(0, 0, 0, 0.6);
+	color: #fff;
+	font: 600 14px/1 system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+	touch-action: manipulation;
+	cursor: pointer;
+}
+
+body.mobile-device #ab-portrait-card {
+	position: fixed;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	z-index: 11;
+	width: min(86vw, 340px);
+	padding: 20px 18px;
+	border-radius: 18px;
+	background: rgba(10, 14, 16, 0.88);
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+	color: #fff;
+	font: 500 15px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+	text-align: center;
+	touch-action: manipulation;
+}
+
+body.mobile-device #ab-portrait-card b {
+	display: block;
+	font-size: 17px;
+	margin-bottom: 4px;
+}
+
+body.mobile-device #ab-portrait-card p {
+	margin: 0 0 12px;
+	opacity: 0.85;
+}
+
+body.mobile-device #ab-portrait-card button {
+	width: 100%;
+	padding: 14px;
+	border: 0;
+	border-radius: 14px;
+	background: #e84a31;
+	color: #fff;
+	font: 700 17px/1 system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+	touch-action: manipulation;
+	cursor: pointer;
+}
+		</style>
+		$GODOT_HEAD_INCLUDE
+	</head>
+	<body>
+		<canvas id="canvas">
+			Your browser does not support the canvas tag.
+		</canvas>
+
+		<noscript>
+			Your browser does not support JavaScript.
+		</noscript>
+
+		<div id="status">
+			<img id="status-splash" class="$GODOT_SPLASH_CLASSES" src="$GODOT_SPLASH" alt="">
+			<progress id="status-progress"></progress>
+			<div id="status-notice"></div>
+		</div>
+
+		<script src="$GODOT_URL"></script>
+		<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const statusOverlay = document.getElementById('status');
+	const statusProgress = document.getElementById('status-progress');
+	const statusNotice = document.getElementById('status-notice');
+
+	let initializing = true;
+	let statusMode = '';
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		const lines = text.split('\n');
+		lines.forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('An unknown error occurred.');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	const missing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
+	});
+
+	if (missing.length !== 0) {
+		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			let serviceWorkerRegistrationPromise;
+			try {
+				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
+			} catch (err) {
+				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+			}
+			// There's a chance that installing the service worker would fix the issue
+			Promise.race([
+				serviceWorkerRegistrationPromise.then((registration) => {
+					if (registration != null) {
+						return Promise.reject(new Error('Service worker already exists.'));
+					}
+					return registration;
+				}).then(() => engine.installServiceWorker()),
+				// For some reason, `getRegistration()` can stall
+				new Promise((resolve) => {
+					setTimeout(() => resolve(), 2000);
+				}),
+			]).then(() => {
+				// Reload if there was no error.
+				window.location.reload();
+			}).catch((err) => {
+				console.error('Error while registering service worker:', err);
+			});
+		} else {
+			// Display the message as usual
+			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+			displayFailureNotice(missingMsg + missing.join('\n'));
+		}
+	} else {
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+}());
+		</script>
+		<script>
+/* Mobile fullscreen helper: desktop browsers exit early, so they are untouched. */
+(function () {
+	var ua = navigator.userAgent || '';
+	var isMobileUA = /Mobi|Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua);
+	var isCoarse = false;
+	try {
+		isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+	} catch (e) { isCoarse = false; }
+	var hasTouch = (navigator.maxTouchPoints || 0) > 1;
+	if (!(isMobileUA || (isCoarse && hasTouch))) {
+		return;
+	}
+	document.body.classList.add('mobile-device');
+
+	var fsBtn = document.createElement('button');
+	fsBtn.id = 'ab-mobile-fs-btn';
+	fsBtn.type = 'button';
+	fsBtn.textContent = '\u26F6 Fullscreen';
+	document.body.appendChild(fsBtn);
+
+	var hint = document.createElement('div');
+	hint.id = 'ab-portrait-card';
+	var hintTitle = document.createElement('b');
+	hintTitle.textContent = '\uD83D\uDD04 Best played in landscape';
+	var hintText = document.createElement('p');
+	hintText.textContent = 'Rotate your phone, then tap below for fullscreen wide view.';
+	var hintBtn = document.createElement('button');
+	hintBtn.type = 'button';
+	hintBtn.textContent = '\u26F6 Play fullscreen';
+	hint.appendChild(hintTitle);
+	hint.appendChild(hintText);
+	hint.appendChild(hintBtn);
+	document.body.appendChild(hint);
+
+	function isFullscreen() {
+		return !!(document.fullscreenElement || document.webkitFullscreenElement);
+	}
+
+	function isPortrait() {
+		return window.innerHeight > window.innerWidth;
+	}
+
+	function updateUI() {
+		var fs = isFullscreen();
+		var portrait = isPortrait();
+		hint.style.display = (!fs && portrait) ? 'block' : 'none';
+		fsBtn.style.display = (!fs && !portrait) ? 'block' : 'none';
+	}
+
+	async function enterFullscreen() {
+		try {
+			var el = document.documentElement;
+			if (!isFullscreen()) {
+				if (el.requestFullscreen) {
+					await el.requestFullscreen({ navigationUI: 'hide' });
+				} else if (el.webkitRequestFullscreen) {
+					el.webkitRequestFullscreen();
+				}
+			}
+		} catch (e) { /* Browser blocked it; canvas still resizes. */ }
+		try {
+			if (screen.orientation && screen.orientation.lock) {
+				await screen.orientation.lock('landscape');
+			}
+		} catch (e) { /* iOS Safari and some browsers reject; rotate hint covers it. */ }
+		updateUI();
+		/* Let Godot's Adaptive resize policy pick up the new window size. */
+		window.dispatchEvent(new Event('resize'));
+	}
+
+	fsBtn.addEventListener('click', enterFullscreen);
+	hintBtn.addEventListener('click', enterFullscreen);
+
+	document.addEventListener('fullscreenchange', updateUI);
+	document.addEventListener('webkitfullscreenchange', updateUI);
+	window.addEventListener('resize', updateUI);
+	window.addEventListener('orientationchange', function () {
+		setTimeout(updateUI, 100);
+	});
+	updateUI();
+})();
+		</script>
+	</body>
+</html>

@@ -1095,14 +1095,16 @@ func _draw_sky() -> void:
 	var vis := _visible_rect()
 	# Fill only what is on screen: the old 7500x3000 rect drew (and blended,
 	# for the veil) far beyond the viewport with identical clipped output.
-	draw_rect(vis, SKY_COLOR, true)
+	# Tall/narrow windows get black letterbox bars with the 720px game band
+	# centered, exactly like desktop (a stretched cover would show only a
+	# zoomed crop of the photo).
+	var letterbox := _visible_world_size().y > VIEW.y + 1.0
+	draw_rect(vis, Color.BLACK if letterbox else SKY_COLOR, true)
 	if not background_texture:
 		return
 	var draw_w := _bg_draw_w
-	
 	var start_x : float = floor(cam_x / draw_w) * draw_w - draw_w
 	var end_x : float = cam_x + VIEW.x + draw_w
-	
 	var x : float = start_x
 	while x < end_x:
 		draw_texture_rect(background_texture, Rect2(x, 0, draw_w, 720), false)
@@ -1306,6 +1308,13 @@ func _draw_center_title(font: Font) -> void:
 	var title_text = "ANGRY BIRDS"
 	var font_size = _fs(100)
 	var target_y = 220.0
+	if _is_portrait_ui():
+		# Tall window: title lives on the picture (upper half of the band),
+		# sized to fit narrow widths instead of the black bar above it.
+		var band := _portrait_band()
+		target_y = band.position.y + band.size.y * 0.48
+		var want := minf(band.size.y * 0.20, (vp.x - 16.0) / 7.5)
+		font_size = maxi(18, int(want / _font_scale()))
 
 	# Precise vertical centering for Godot draw_string (which uses baseline)
 	if _title_metrics_size != font_size:
@@ -1320,6 +1329,8 @@ func _draw_center_title(font: Font) -> void:
 	
 	var version_font_size = _fs(18)
 	var version_y_offset = 75.0                    # Distance below the title
+	if _is_portrait_ui():
+		version_y_offset = _portrait_band().size.y * 0.14
 	
 	var version_pos = Vector2(0, target_y + version_y_offset)
 	
@@ -1366,17 +1377,18 @@ func _result_row(font: Font, rect: Rect2, y: float, label: String, value: int, s
 
 func _draw_result(font: Font, title: String, button: String) -> void:
 	var vp := get_viewport_rect().size
-	var rect := Rect2(vp*0.5-Vector2(250,235),Vector2(500,470))
+	var dialog_w := minf(500.0, maxf(340.0, vp.x - 24.0)) if _is_portrait_ui() else 500.0
+	var rect := Rect2(vp * 0.5 - Vector2(dialog_w * 0.5, 235), Vector2(dialog_w, 470))
 	var top := rect.position.y
 	ui.draw_rect(Rect2(Vector2.ZERO,vp),Color(0.12,0.19,0.22,0.48))
 	_score_card(rect)
-	ui.draw_string(font,Vector2(rect.position.x,top+54),title,HORIZONTAL_ALIGNMENT_CENTER,500,_fs(32),Color("#d4422e"))
+	ui.draw_string(font,Vector2(rect.position.x,top+54),title,HORIZONTAL_ALIGNMENT_CENTER,int(dialog_w),_fs(32),Color("#d4422e"))
 	if game_state == "WIN":
 		_result_row(font,rect,top+108,"Destruction",result_destruction_score)
 		_result_row(font,rect,top+144,"Unused birds",result_bonus)
 		ui.draw_line(Vector2(rect.position.x+30,top+164),Vector2(rect.end.x-30,top+164),Color("#ded5c2"),1,true)
 	else:
-		ui.draw_string(font,Vector2(rect.position.x,top+123),"Give it another shot!",HORIZONTAL_ALIGNMENT_CENTER,500,_fs(21),Color("#5b6869"))
+		ui.draw_string(font,Vector2(rect.position.x,top+123),"Give it another shot!",HORIZONTAL_ALIGNMENT_CENTER,int(dialog_w),_fs(21),Color("#5b6869"))
 	_result_row(font,rect,top+207,"Level score",result_level_score,28,true)
 	var note := "Not added to total"
 	if game_state == "WIN":
@@ -1395,11 +1407,12 @@ func _draw_result(font: Font, title: String, button: String) -> void:
 func _draw_campaign_result(font: Font) -> void:
 	var vp := get_viewport_rect().size
 	ui.draw_rect(Rect2(Vector2.ZERO, vp), Color(0.08, 0.16, 0.18, 0.45))
-	var rect := Rect2(vp.x * 0.5 - 270, vp.y * 0.5 - 250, 540, 480)
+	var dialog_w := minf(540.0, maxf(340.0, vp.x - 24.0)) if _is_portrait_ui() else 540.0
+	var rect := Rect2(vp.x * 0.5 - dialog_w * 0.5, vp.y * 0.5 - 250, dialog_w, 480)
 	var top := rect.position.y
 	_score_card(rect)
-	_draw_text_fx(font, Vector2(rect.position.x, top + 50), "CONGRATULATIONS!", HORIZONTAL_ALIGNMENT_CENTER, 540, 34, Color("#d93d32"), 3, 3)
-	ui.draw_string(font, Vector2(rect.position.x, top + 82), "You completed the entire campaign!", HORIZONTAL_ALIGNMENT_CENTER, 540, _fs(21), Color("#5b6869"))
+	_draw_text_fx(font, Vector2(rect.position.x, top + 50), "CONGRATULATIONS!", HORIZONTAL_ALIGNMENT_CENTER, int(dialog_w), 34, Color("#d93d32"), 3, 3)
+	ui.draw_string(font, Vector2(rect.position.x, top + 82), "You completed the entire campaign!", HORIZONTAL_ALIGNMENT_CENTER, int(dialog_w), _fs(21), Color("#5b6869"))
 	_result_row(font, rect, top + 135, "Levels completed", campaign_levels_completed)
 	_result_row(font, rect, top + 175, "Birds launched", campaign_shots)
 	_result_row(font, rect, top + 215, "Retries", campaign_retries)
@@ -1410,15 +1423,40 @@ func _draw_campaign_result(font: Font) -> void:
 	_result_row(font, rect, top + 325, "Total score", score, 28, true)
 	_draw_button(_get_ui_rect("result"), "OK")
 
+func _is_portrait_ui() -> bool:
+	# Narrow window held upright (phones in portrait). Landscape windows and
+	# desktop never take this path, so their layout stays exactly as before.
+	var vp := get_viewport_rect().size
+	return vp.y > 0.0 and vp.x < vp.y
+
+func _portrait_band() -> Rect2:
+	# Screen rect (UI pixels) of the 0..720 world band on tall windows.
+	# The camera always sits at y 360, so the band position follows only
+	# the visible height. Used to keep portrait UI on the picture.
+	var vp := get_viewport_rect().size
+	var vs := _visible_world_size()
+	if vs.y <= 0.0:
+		return Rect2(Vector2.ZERO, vp)
+	var top := (vs.y * 0.5 - VIEW.y * 0.5) / vs.y * vp.y
+	var h := VIEW.y / vs.y * vp.y
+	return Rect2(0.0, top, vp.x, h)
+
 func _get_ui_rect(id: String) -> Rect2:
 	var vp := get_viewport_rect().size
 	var cx := vp.x * 0.5
 	# Larger MENU hit area on touch devices: 48px tall is hard to hit.
 	# touch_mode is cached in _ready; DisplayServer lookup per frame avoided.
 	match id:
-		"play": return Rect2(cx - 100, 310, 200, 80)
+		"play":
+			if _is_portrait_ui():
+				var band := _portrait_band()
+				return Rect2(cx - 100.0, band.position.y + band.size.y * 0.66, 200.0, band.size.y * 0.32)
+			return Rect2(cx - 100, 310, 200, 80)
 		"result": return Rect2(cx - 125, vp.y * 0.5 + 150, 250, 64)
 		"menu":
+			if _is_portrait_ui():
+				var band := _portrait_band()
+				return Rect2(vp.x - 130.0, band.position.y + 2.0, 120.0, band.size.y * 0.20)
 			if touch_mode:
 				return Rect2(vp.x - 234, 12, 222, 60)
 			return Rect2(vp.x - 220, 20, 190, 48)
